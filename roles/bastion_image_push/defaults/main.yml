@@ -1,18 +1,8 @@
 ---
-# All bastion vars are supplied via extra_vars - no defaults here.
-# If any of these are missing the preflight validation in Play 0 will catch it.
-# Listing them here purely as documentation of what extra_vars must supply:
-#
-#   bastion_host          - bastion IP or FQDN
-#   bastion_user          - SSH user on bastion
-#   bastion_password      - SSH password on bastion
-#   bastion_become        - true/false
-#   bastion_become_method - sudo
-#   bastion_become_password
-#   bastion_ssh_port      - default 22
-#   bastion_image_path    - CIFS mount path for BIG-IP ISOs on bastion
-#   bigip_image_filename  - ISO filename
-#   bigip_remote_image_path - /shared/images on BIG-IP
-#   bigip_scp_user        - BIG-IP SSH user for SCP
-#   bigip_scp_port        - BIG-IP SSH port for SCP
-#   bigip_scp_opts        - SCP options string
+# Defaults for bastion CIFS paths.
+# These are set in group_vars/bastion.yml and can be overridden in extra_vars.
+bastion_image_path: "/mnt/cifs/bigip-images"
+bigip_remote_image_path: "/shared/images"
+bigip_scp_user: "admin"
+bigip_scp_port: 22
+bigip_scp_opts: "-o StrictHostKeyChecking=no -o BatchMode=yes"

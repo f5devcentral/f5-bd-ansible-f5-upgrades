@@ -1,18 +1,10 @@
 ---
-# All bastion and path vars are supplied via extra_vars - no defaults here.
-# Listing them here as documentation of what extra_vars must supply:
-#
-#   bastion_host          - bastion IP or FQDN
-#   bastion_user          - SSH user on bastion
-#   bastion_password      - SSH password on bastion
-#   bastion_become        - true/false
-#   bastion_become_method - sudo
-#   bastion_become_password
-#   bastion_ssh_port      - default 22
-#   bastion_backup_root   - CIFS mount root for backups on bastion
-#   snapshot_output_dir   - EE runner staging dir
-#   bigip_snapshot_save_ucs - true/false
-#   bigip_ucs_path        - /var/local/ucs on BIG-IP
-#   bigip_scp_user        - BIG-IP SSH user for SCP
-#   bigip_scp_port        - BIG-IP SSH port
-#   bigip_scp_opts        - SCP options string
+# Defaults for bastion backup paths.
+# These are set in group_vars/bastion.yml and can be overridden in extra_vars.
+bastion_backup_root: "/mnt/cifs/bigip-backups"
+snapshot_output_dir: "/runner/artifacts/snapshots"
+bigip_snapshot_save_ucs: true
+bigip_ucs_path: "/var/local/ucs"
+bigip_scp_user: "admin"
+bigip_scp_port: 22
+bigip_scp_opts: "-o StrictHostKeyChecking=no -o BatchMode=yes"

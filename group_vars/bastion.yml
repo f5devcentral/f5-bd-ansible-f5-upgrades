@@ -1,0 +1,36 @@
+---
+# =============================================================================
+# group_vars/bastion.yml
+# =============================================================================
+# Variables for the bastion host.
+#
+# Credentials (ansible_user, ansible_password, ansible_become_password) come
+# from the AAP Machine Credential bound to this group in the Job Template.
+# Never store credentials here.
+#
+# The bastion serves two purposes:
+#   1. Image staging  - CIFS share mounted, SCP to BIG-IP /shared/images/
+#   2. Backup storage - snapshot JSON diffs and UCS backups written here
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Connection
+# -----------------------------------------------------------------------------
+ansible_connection: ssh
+ansible_become: true
+ansible_become_method: sudo
+# ansible_user           -> AAP Machine Credential
+# ansible_password       -> AAP Machine Credential
+# ansible_become_password -> AAP Machine Credential (or set same as password)
+
+# -----------------------------------------------------------------------------
+# CIFS mount paths - defaults, override via extra_vars if needed per run
+# -----------------------------------------------------------------------------
+
+# Root of CIFS mount where BIG-IP ISO images are staged
+# Full image path: {{ bastion_image_path }}/{{ bigip_image_filename }}
+bastion_image_path: "/mnt/cifs/bigip-images"
+
+# Root of CIFS mount where backups are stored
+# Structure: {{ bastion_backup_root }}/<device-hostname>/<date>/
+bastion_backup_root: "/mnt/cifs/bigip-backups"

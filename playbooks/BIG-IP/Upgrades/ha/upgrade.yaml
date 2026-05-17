@@ -20,8 +20,9 @@
 #   Credential : AAP Machine Credential for BIG-IP devices
 #   Extra Vars : paste contents of extra_vars/upgrade_vars.yml and update values
 #
-# The bastion host has NO inventory entry. All bastion connectivity is
-# driven entirely from extra_vars (bastion_host, bastion_user, etc.).
+# The bastion host must exist in the [bastion] inventory group.
+# Its credentials come from the AAP Machine Credential bound to the Job Template.
+# extra_vars supply the bastion hostname and path overrides only.
 # =============================================================================
 
 
@@ -44,10 +45,6 @@
         - bigip_target_version
         - bigip_image_filename
         - bastion_host
-        - bastion_user
-        - bastion_password
-        - bastion_image_path
-        - bastion_backup_root
         - bigip_scp_user
       delegate_to: localhost
       run_once: false

@@ -2,10 +2,11 @@
 # =============================================================================
 # bastion_storage - Push snapshot JSONs and UCS backup to bastion storage
 # =============================================================================
-# The bastion is NOT in inventory. All tasks that execute on it use the
-# ad-hoc SSH connection pattern with vars injected from extra_vars.
+# The bastion is an AAP inventory object in [bastion] group.
+# Tasks that run on it use delegate_to: "{{ bastion_host }}".
+# AAP resolves credentials from the Machine Credential bound to the Job Template.
 #
-# Directory structure on bastion:
+# Directory structure on bastion CIFS mount:
 #   {{ bastion_backup_root }}/
 #     {{ inventory_hostname }}/
 #       {{ backup_date }}/
@@ -22,37 +23,21 @@
 #   5. Confirm all files stored
 # =============================================================================
 
-# Convenience var block - used across all bastion tasks in this role
 - name: "BASTION_STORAGE | Set bastion backup path for this device"
   ansible.builtin.set_fact:
     bastion_device_backup_path: "{{ bastion_backup_root }}/{{ inventory_hostname }}/{{ backup_date }}"
-
-# -----------------------------------------------------------------------------
-# Create directory on bastion
-# -----------------------------------------------------------------------------
 
 - name: "BASTION_STORAGE | Create per-device/date directory on bastion"
   ansible.builtin.file:
     path: "{{ bastion_device_backup_path }}"
     state: directory
     mode: '0755'
-  delegate_to: localhost
-  vars:
-    ansible_connection: ssh
-    ansible_host: "{{ bastion_host }}"
-    ansible_user: "{{ bastion_user }}"
-    ansible_password: "{{ bastion_password }}"
-    ansible_become: "{{ bastion_become }}"
-    ansible_become_method: "{{ bastion_become_method }}"
-    ansible_become_password: "{{ bastion_become_password }}"
-    ansible_port: "{{ bastion_ssh_port | default(22) }}"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
-  no_log: true
+  delegate_to: "{{ bastion_host }}"
+  become: true
 
 # -----------------------------------------------------------------------------
 # Push snapshot JSON files from EE runner -> bastion
-# ansible.builtin.copy with delegate_to reads src locally on the EE and
-# writes dest over SSH to the bastion - no intermediate temp files needed
+# ansible.builtin.copy reads src on the EE and writes dest to bastion over SSH
 # -----------------------------------------------------------------------------
 
 - name: "BASTION_STORAGE | Copy pre-snapshot JSON to bastion"
@@ -60,57 +45,27 @@
     src: "{{ snapshot_output_dir }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre.json"
     dest: "{{ bastion_device_backup_path }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre.json"
     mode: '0644'
-  delegate_to: localhost
-  vars:
-    ansible_connection: ssh
-    ansible_host: "{{ bastion_host }}"
-    ansible_user: "{{ bastion_user }}"
-    ansible_password: "{{ bastion_password }}"
-    ansible_become: "{{ bastion_become }}"
-    ansible_become_method: "{{ bastion_become_method }}"
-    ansible_become_password: "{{ bastion_become_password }}"
-    ansible_port: "{{ bastion_ssh_port | default(22) }}"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
-  no_log: true
+  delegate_to: "{{ bastion_host }}"
+  become: true
 
 - name: "BASTION_STORAGE | Copy post-snapshot JSON to bastion"
   ansible.builtin.copy:
     src: "{{ snapshot_output_dir }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_post.json"
     dest: "{{ bastion_device_backup_path }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_post.json"
     mode: '0644'
-  delegate_to: localhost
-  vars:
-    ansible_connection: ssh
-    ansible_host: "{{ bastion_host }}"
-    ansible_user: "{{ bastion_user }}"
-    ansible_password: "{{ bastion_password }}"
-    ansible_become: "{{ bastion_become }}"
-    ansible_become_method: "{{ bastion_become_method }}"
-    ansible_become_password: "{{ bastion_become_password }}"
-    ansible_port: "{{ bastion_ssh_port | default(22) }}"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
-  no_log: true
+  delegate_to: "{{ bastion_host }}"
+  become: true
 
 - name: "BASTION_STORAGE | Copy diff JSON to bastion"
   ansible.builtin.copy:
     src: "{{ snapshot_output_dir }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_diff.json"
     dest: "{{ bastion_device_backup_path }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_diff.json"
     mode: '0644'
-  delegate_to: localhost
-  vars:
-    ansible_connection: ssh
-    ansible_host: "{{ bastion_host }}"
-    ansible_user: "{{ bastion_user }}"
-    ansible_password: "{{ bastion_password }}"
-    ansible_become: "{{ bastion_become }}"
-    ansible_become_method: "{{ bastion_become_method }}"
-    ansible_become_password: "{{ bastion_become_password }}"
-    ansible_port: "{{ bastion_ssh_port | default(22) }}"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
-  no_log: true
+  delegate_to: "{{ bastion_host }}"
+  become: true
 
 # -----------------------------------------------------------------------------
-# UCS: trigger save on BIG-IP, then SCP directly from BIG-IP to bastion
+# UCS: trigger save on BIG-IP, SCP directly from BIG-IP to bastion
 # The bastion pulls from BIG-IP so the UCS never passes through the EE
 # -----------------------------------------------------------------------------
 
@@ -144,23 +99,13 @@
     {{ bastion_device_backup_path }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre_upgrade.ucs
   args:
     executable: /bin/bash
-  delegate_to: localhost
-  vars:
-    ansible_connection: ssh
-    ansible_host: "{{ bastion_host }}"
-    ansible_user: "{{ bastion_user }}"
-    ansible_password: "{{ bastion_password }}"
-    ansible_become: "{{ bastion_become }}"
-    ansible_become_method: "{{ bastion_become_method }}"
-    ansible_become_password: "{{ bastion_become_password }}"
-    ansible_port: "{{ bastion_ssh_port | default(22) }}"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+  delegate_to: "{{ bastion_host }}"
+  become: true
   when: bigip_snapshot_save_ucs | default(true) | bool
   register: ucs_scp_result
   # UCS files can be several hundred MB - allow 15 minutes
   async: 900
   poll: 15
-  no_log: true
   ignore_errors: true
 
 - name: "BASTION_STORAGE | WARNING - UCS SCP failed (upgrade still succeeded)"
@@ -182,18 +127,7 @@
     paths: "{{ bastion_device_backup_path }}"
     patterns: "{{ inventory_hostname }}_{{ snapshot_timestamp }}*"
   register: bastion_stored_files
-  delegate_to: localhost
-  vars:
-    ansible_connection: ssh
-    ansible_host: "{{ bastion_host }}"
-    ansible_user: "{{ bastion_user }}"
-    ansible_password: "{{ bastion_password }}"
-    ansible_become: "{{ bastion_become }}"
-    ansible_become_method: "{{ bastion_become_method }}"
-    ansible_become_password: "{{ bastion_become_password }}"
-    ansible_port: "{{ bastion_ssh_port | default(22) }}"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
-  no_log: true
+  delegate_to: "{{ bastion_host }}"
 
 - name: "BASTION_STORAGE | Confirm files stored on bastion"
   ansible.builtin.debug:
