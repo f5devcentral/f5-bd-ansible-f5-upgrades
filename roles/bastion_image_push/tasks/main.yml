@@ -3,14 +3,16 @@
 # bastion_image_push
 # =============================================================================
 # Network topology:
-#   bastion  <-- SSH -->  BIG-IP  (direct)
-#   bastion  <-- SSH -->  AAP EE  <-- SSH/HTTPS -->  BIG-IP
+#   bastion CIFS --> rsync --> EE /runner/artifacts/ --> bigip_software_image --> BIG-IP
 #
 # Flow:
 #   1. Verify image exists on bastion CIFS mount
 #   2. Check if image already registered on BIG-IP (idempotent - skip if so)
-#   3. SCP image directly from bastion -> BIG-IP /shared/images/
-#   4. Poll BIG-IP REST until image status is 'verified'
+#   3. rsync image from bastion to EE staging dir (streams - no memory buffer)
+#   4. Upload from EE to BIG-IP via f5networks.f5_bigip.bigip_software_image
+#      (iControl REST chunked HTTPS upload using existing vault credentials)
+#   5. Remove EE staging copy to free runner disk space
+#   6. Poll BIG-IP REST until image status is 'verified'
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -34,7 +36,7 @@
       ({{ (bastion_image_stat.stat.size / 1024 / 1024) | round(1) }} MB)
 
 # -----------------------------------------------------------------------------
-# Step 2 - Check if image already on BIG-IP (skip SCP if so)
+# Step 2 - Check if image already on BIG-IP (skip transfer if so)
 # -----------------------------------------------------------------------------
 
 - name: "BASTION_PUSH | Check if image already registered on BIG-IP"
@@ -59,45 +61,78 @@
          | selectattr('name', 'equalto', bigip_image_filename)
          | list | length > 0 }}
 
-- name: "BASTION_PUSH | Image already on BIG-IP - skipping SCP"
+- name: "BASTION_PUSH | Image already on BIG-IP - skipping transfer"
   ansible.builtin.debug:
     msg: "{{ bigip_image_filename }} already registered on {{ inventory_hostname }} - skipping."
   when: bigip_image_already_present | bool
 
 # -----------------------------------------------------------------------------
-# Step 3 - SCP image directly from bastion to BIG-IP /shared/images/
-# Runs on the bastion (delegate_to: bastion) so the transfer is
-# bastion -> BIG-IP directly with no EE involvement.
-# async: 1800 / poll: 30 keeps the AAP job alive during the ~2GB transfer.
+# Step 3 - rsync image from bastion to EE staging dir
+# rsync streams the file over SSH without buffering in memory.
+# Runs on the EE (delegate_to: localhost) pulling FROM bastion.
+# Uses the existing SSH connection/credentials to bastion.
+# async not needed - rsync handles its own streaming.
 # -----------------------------------------------------------------------------
 
-- name: "BASTION_PUSH | SCP image from bastion directly to BIG-IP /shared/images/"
+- name: "BASTION_PUSH | Ensure EE staging directory exists"
+  ansible.builtin.file:
+    path: "{{ bigip_ee_staging_dir }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  when: not bigip_image_already_present | bool
+
+- name: "BASTION_PUSH | rsync image from bastion to EE staging dir"
   ansible.builtin.shell: >
-    scp -P {{ bigip_ssh_port | default(22) }}
-    -o StrictHostKeyChecking=no
-    -o BatchMode=yes
-    {{ bastion_image_path }}/{{ bigip_image_filename }}
-    {{ bigip_scp_user }}@{{ ansible_host }}:/shared/images/{{ bigip_image_filename }}
+    rsync -az --progress
+    --rsh="ssh -o StrictHostKeyChecking=no"
+    {{ ansible_user }}@{{ hostvars['bastion']['ansible_host'] }}:{{ bastion_image_path }}/{{ bigip_image_filename }}
+    {{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}
   args:
     executable: /bin/bash
-  delegate_to: bastion
-  vars:
-    ansible_connection: ssh
+  delegate_to: localhost
   when: not bigip_image_already_present | bool
-  register: bastion_scp_result
-  async: 1800
+  register: rsync_result
+  async: 3600
   poll: 30
 
-- name: "BASTION_PUSH | SCP transfer complete"
+- name: "BASTION_PUSH | Image synced to EE staging dir"
   ansible.builtin.debug:
-    msg: >-
-      Transfer complete: {{ bigip_image_filename }}
-      -> {{ inventory_hostname }} ({{ ansible_host }}):/shared/images/
+    msg: "Image synced to EE: {{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}"
   when: not bigip_image_already_present | bool
 
 # -----------------------------------------------------------------------------
-# Step 4 - Poll BIG-IP until image is 'verified'
-# BIG-IP scans and verifies the ISO after it appears in /shared/images/
+# Step 4 - Upload from EE to BIG-IP via iControl REST
+# f5networks.f5_bigip.bigip_software_image runs on the EE (delegate_to: localhost)
+# using ansible_user/ansible_password already available from AAP vault credential.
+# Chunked HTTPS upload - no SSH to BIG-IP needed.
+# -----------------------------------------------------------------------------
+
+- name: "BASTION_PUSH | Upload image from EE to BIG-IP via iControl REST"
+  f5networks.f5_bigip.bigip_software_image:
+    image: "{{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}"
+    state: present
+  delegate_to: localhost
+  when: not bigip_image_already_present | bool
+
+- name: "BASTION_PUSH | Upload complete"
+  ansible.builtin.debug:
+    msg: "Upload complete: {{ bigip_image_filename }} -> {{ inventory_hostname }} ({{ ansible_host }})"
+  when: not bigip_image_already_present | bool
+
+# -----------------------------------------------------------------------------
+# Step 5 - Remove EE staging copy to free runner disk space
+# -----------------------------------------------------------------------------
+
+- name: "BASTION_PUSH | Remove image from EE staging dir"
+  ansible.builtin.file:
+    path: "{{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}"
+    state: absent
+  delegate_to: localhost
+  when: not bigip_image_already_present | bool
+
+# -----------------------------------------------------------------------------
+# Step 6 - Poll BIG-IP until image is 'verified'
 # -----------------------------------------------------------------------------
 
 - name: "BASTION_PUSH | Poll BIG-IP until image is verified and ready"

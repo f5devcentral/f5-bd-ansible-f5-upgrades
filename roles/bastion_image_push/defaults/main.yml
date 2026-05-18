@@ -2,8 +2,5 @@
 # CIFS path on bastion where BIG-IP ISOs are staged - override via extra_vars
 bastion_image_path: "/mnt/cifs/bigip-images"
 
-# SSH user on BIG-IP that bastion SCPs as (needs write access to /shared/images)
-bigip_scp_user: "admin"
-
-# BIG-IP SSH port for SCP from bastion
-bigip_ssh_port: 22
+# Temporary staging dir on EE runner for image transit
+bigip_ee_staging_dir: "/runner/artifacts/images"

@@ -46,20 +46,15 @@ bastion_image_path: "/mnt/cifs/bigip-images"
 bastion_backup_root: "/mnt/cifs/bigip-backups"
 
 # =============================================================================
-# BIG-IP SCP settings (bastion -> BIG-IP direct image transfer)
-# =============================================================================
-
-# SSH user on BIG-IP that bastion SCPs as (needs write to /shared/images)
-bigip_scp_user: "admin"
-
-# BIG-IP SSH port used by bastion for SCP
-bigip_ssh_port: 22
-
-# =============================================================================
 # EE STAGING
-# Used only for snapshot JSONs and UCS files before bastion push.
-# Images are no longer staged on the EE - bastion SCPs directly to BIG-IP.
+# Used for image transit (rsync from bastion, upload to BIG-IP, then deleted)
+# and for snapshot JSONs and UCS files before bastion push.
 # =============================================================================
+
+# Staging dir for image file transit
+bigip_ee_staging_dir: "/runner/artifacts/images"
+
+# Staging dir for snapshot JSON and UCS files before bastion push
 
 # Staging dir for snapshot JSON and UCS files before bastion push
 snapshot_output_dir: "/runner/artifacts/snapshots"
