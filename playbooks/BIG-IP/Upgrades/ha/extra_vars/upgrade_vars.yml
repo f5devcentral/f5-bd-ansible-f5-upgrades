@@ -47,14 +47,9 @@ bastion_backup_root: "/mnt/cifs/bigip-backups"
 
 # =============================================================================
 # EE STAGING
-# Used for image transit (rsync from bastion, upload to BIG-IP, then deleted)
-# and for snapshot JSONs and UCS files before bastion push.
+# Used only for snapshot JSONs and UCS files before bastion push.
+# Images are uploaded directly from bastion to BIG-IP via curl (HTTPS).
 # =============================================================================
-
-# Staging dir for image file transit
-bigip_ee_staging_dir: "/runner/artifacts/images"
-
-# Staging dir for snapshot JSON and UCS files before bastion push
 
 # Staging dir for snapshot JSON and UCS files before bastion push
 snapshot_output_dir: "/runner/artifacts/snapshots"

@@ -1,6 +1,3 @@
 ---
 # CIFS path on bastion where BIG-IP ISOs are staged - override via extra_vars
 bastion_image_path: "/mnt/cifs/bigip-images"
-
-# Temporary staging dir on EE runner for image transit
-bigip_ee_staging_dir: "/runner/artifacts/images"

@@ -4,10 +4,13 @@ galaxy_info:
   author: f5networks
   description: >
     Stages a BIG-IP upgrade ISO from the bastion CIFS share to the BIG-IP
-    device via SCP. Runs delegate_to: bastion_host so the SCP originates
-    from the bastion (which has the CIFS mount) rather than the AAP EE
-    (which cannot mount CIFS shares).
+    device via SCP. Runs delegate_to: bastion so the SCP originates from
+    the bastion (which has the CIFS mount) rather than the AAP EE.
   min_ansible_version: "2.9"
 collections:
   - ansible.builtin
+# REQUIREMENTS:
+#   sshpass must be installed on the bastion host before running this role.
+#   RHEL/Rocky:  sudo yum install -y sshpass
+#   Ubuntu:      sudo apt install -y sshpass
 dependencies: []

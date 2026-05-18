@@ -2,22 +2,16 @@
 # =============================================================================
 # bastion_image_push
 # =============================================================================
-# Network topology:
-#   bastion CIFS --> rsync --> EE /runner/artifacts/ --> bigip_software_image --> BIG-IP
+# bastion CIFS --> sshpass + SCP --> BIG-IP /shared/images/
 #
-# Flow:
-#   1. Verify image exists on bastion CIFS mount
-#   2. Check if image already registered on BIG-IP (idempotent - skip if so)
-#   3. rsync image from bastion to EE staging dir (streams - no memory buffer)
-#   4. Upload from EE to BIG-IP via f5networks.f5_bigip.bigip_software_image
-#      (iControl REST chunked HTTPS upload using existing vault credentials)
-#   5. Remove EE staging copy to free runner disk space
-#   6. Poll BIG-IP REST until image status is 'verified'
+# REQUIREMENT: sshpass must be installed on the bastion host.
+#   RHEL/Rocky:  sudo yum install -y sshpass
+#   Ubuntu:      sudo apt install -y sshpass
+#
+# sshpass feeds the BIG-IP SSH password non-interactively to SCP.
+# Password comes from the AAP vault credential (ansible_password).
+# No SSH keys required between bastion and BIG-IP.
 # =============================================================================
-
-# -----------------------------------------------------------------------------
-# Step 1 - Verify image exists on bastion CIFS mount
-# -----------------------------------------------------------------------------
 
 - name: "BASTION_PUSH | Verify image exists on bastion CIFS mount"
   ansible.builtin.stat:
@@ -31,13 +25,8 @@
 - name: "BASTION_PUSH | Image confirmed on bastion"
   ansible.builtin.debug:
     msg: >-
-      Image found on bastion:
-      {{ bastion_image_path }}/{{ bigip_image_filename }}
+      Image found: {{ bastion_image_path }}/{{ bigip_image_filename }}
       ({{ (bastion_image_stat.stat.size / 1024 / 1024) | round(1) }} MB)
-
-# -----------------------------------------------------------------------------
-# Step 2 - Check if image already on BIG-IP (skip transfer if so)
-# -----------------------------------------------------------------------------
 
 - name: "BASTION_PUSH | Check if image already registered on BIG-IP"
   ansible.builtin.uri:
@@ -66,74 +55,33 @@
     msg: "{{ bigip_image_filename }} already registered on {{ inventory_hostname }} - skipping."
   when: bigip_image_already_present | bool
 
-# -----------------------------------------------------------------------------
-# Step 3 - rsync image from bastion to EE staging dir
-# rsync streams the file over SSH without buffering in memory.
-# Runs on the EE (delegate_to: localhost) pulling FROM bastion.
-# Uses the existing SSH connection/credentials to bastion.
-# async not needed - rsync handles its own streaming.
-# -----------------------------------------------------------------------------
-
-- name: "BASTION_PUSH | Ensure EE staging directory exists"
-  ansible.builtin.file:
-    path: "{{ bigip_ee_staging_dir }}"
-    state: directory
-    mode: '0755'
-  delegate_to: localhost
-  when: not bigip_image_already_present | bool
-
-- name: "BASTION_PUSH | rsync image from bastion to EE staging dir"
+- name: "BASTION_PUSH | SCP image from bastion to BIG-IP /shared/images/"
   ansible.builtin.shell: >
-    rsync -az --progress
-    --rsh="ssh -o StrictHostKeyChecking=no"
-    {{ ansible_user }}@{{ hostvars['bastion']['ansible_host'] }}:{{ bastion_image_path }}/{{ bigip_image_filename }}
-    {{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}
+    sshpass -p '{{ ansible_password | default(ansible_httpapi_password) }}'
+    scp -P {{ bigip_ssh_port | default(22) }}
+    -o StrictHostKeyChecking=no
+    -o PreferredAuthentications=password
+    -o PasswordAuthentication=yes
+    -o PubkeyAuthentication=no
+    {{ bastion_image_path }}/{{ bigip_image_filename }}
+    {{ ansible_user }}@{{ ansible_host }}:/shared/images/{{ bigip_image_filename }}
   args:
     executable: /bin/bash
-  delegate_to: localhost
+  delegate_to: bastion
+  vars:
+    ansible_connection: ssh
   when: not bigip_image_already_present | bool
-  register: rsync_result
+  register: bastion_scp_result
   async: 3600
   poll: 30
+  # TROUBLESHOOTING: no_log: true
 
-- name: "BASTION_PUSH | Image synced to EE staging dir"
+- name: "BASTION_PUSH | Transfer complete"
   ansible.builtin.debug:
-    msg: "Image synced to EE: {{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}"
+    msg: >-
+      Transfer complete: {{ bigip_image_filename }}
+      -> {{ inventory_hostname }} ({{ ansible_host }}):/shared/images/
   when: not bigip_image_already_present | bool
-
-# -----------------------------------------------------------------------------
-# Step 4 - Upload from EE to BIG-IP via iControl REST
-# f5networks.f5_bigip.bigip_software_image runs on the EE (delegate_to: localhost)
-# using ansible_user/ansible_password already available from AAP vault credential.
-# Chunked HTTPS upload - no SSH to BIG-IP needed.
-# -----------------------------------------------------------------------------
-
-- name: "BASTION_PUSH | Upload image from EE to BIG-IP via iControl REST"
-  f5networks.f5_bigip.bigip_software_image:
-    image: "{{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}"
-    state: present
-  delegate_to: localhost
-  when: not bigip_image_already_present | bool
-
-- name: "BASTION_PUSH | Upload complete"
-  ansible.builtin.debug:
-    msg: "Upload complete: {{ bigip_image_filename }} -> {{ inventory_hostname }} ({{ ansible_host }})"
-  when: not bigip_image_already_present | bool
-
-# -----------------------------------------------------------------------------
-# Step 5 - Remove EE staging copy to free runner disk space
-# -----------------------------------------------------------------------------
-
-- name: "BASTION_PUSH | Remove image from EE staging dir"
-  ansible.builtin.file:
-    path: "{{ bigip_ee_staging_dir }}/{{ bigip_image_filename }}"
-    state: absent
-  delegate_to: localhost
-  when: not bigip_image_already_present | bool
-
-# -----------------------------------------------------------------------------
-# Step 6 - Poll BIG-IP until image is 'verified'
-# -----------------------------------------------------------------------------
 
 - name: "BASTION_PUSH | Poll BIG-IP until image is verified and ready"
   ansible.builtin.uri:
