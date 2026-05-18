@@ -201,7 +201,7 @@
              if bigip_snapshot_save_ucs | bool else 'not_saved' }}
       virtual_servers: "{{ snap_virtual_servers.json.entries | default({}) }}"
       pools: "{{ snap_pools.json.entries | default({}) }}"
-      routes: "{{ snap_routes.json.items | default([]) }}"
+      routes: "{{ snap_routes.json['items'] | default([]) }}"
       arp: "{{ snap_arp.json.entries | default({}) }}"
   delegate_to: localhost
 

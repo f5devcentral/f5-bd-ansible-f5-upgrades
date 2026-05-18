@@ -170,7 +170,7 @@
         sync_state: "{{ snap_post_sync_state }}"
       virtual_servers: "{{ snap_post_vs.json.entries | default({}) }}"
       pools: "{{ snap_post_pools.json.entries | default({}) }}"
-      routes: "{{ snap_post_routes.json.items | default([]) }}"
+      routes: "{{ snap_post_routes.json['items'] | default([]) }}"
       arp: "{{ snap_post_arp.json.entries | default({}) }}"
   delegate_to: localhost
 
@@ -208,9 +208,9 @@
   ansible.builtin.set_fact:
     diff_routes:
       pre_count: "{{ snapshot_pre_loaded.routes | default([]) | length }}"
-      post_count: "{{ snap_post_routes.json.items | default([]) | length }}"
-      added: "{{ (snap_post_routes.json.items | default([]) | map(attribute='name') | list)
-                 | difference(snapshot_pre_loaded.routes | default([]) | map(attribute='name') | list) }}"
+      post_count: "{{ snap_post_routes.json['items'] | default([]) | length }}"
+      added: "{{ (snap_post_routes.json['items'] | default([]) | map(attribute='name') | list)
+                   | difference(snap_post_routes.json['items'] | default([]) | map(attribute='name') | list) }}"
       removed: "{{ (snapshot_pre_loaded.routes | default([]) | map(attribute='name') | list)
                    | difference(snap_post_routes.json.items | default([]) | map(attribute='name') | list) }}"
 

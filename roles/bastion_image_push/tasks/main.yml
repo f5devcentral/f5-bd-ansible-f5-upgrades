@@ -55,7 +55,7 @@
 - name: "BASTION_PUSH | Set image_already_present fact"
   ansible.builtin.set_fact:
     bigip_image_already_present: >-
-      {{ bigip_existing_images.json.items
+      {{ bigip_existing_images.json['items']
          | default([])
          | selectattr('name', 'defined')
          | selectattr('name', 'equalto', bigip_image_filename)
