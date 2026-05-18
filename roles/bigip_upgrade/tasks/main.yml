@@ -4,14 +4,14 @@
 # =============================================================================
 # Image is already on BIG-IP /shared/images/ verified by bastion_image_push.
 #
-# Single module call with state=activated:
-#   - Installs image to volume
-#   - Waits for installation to complete
-#   - Activates (reboots into) the new volume
+# Pattern per F5 module documentation:
+#   Call 1: state=activated - starts install+activation, returns volume_uri
+#   Call 2: volume_uri + timeout - polls until install complete or reboot
+#   Pause:  if device is restarting services wait 6 minutes
+#   Call 3: volume_uri - check again after reboot if needed
 #
-# timeout: 3600 gives the module up to 1 hour to complete install + activate.
-# Connection drops during reboot - caught by failed_when checking for
-# connection-related errors only. bigip_wait handles the rest.
+# bigip_reboot_triggered is set to true unconditionally after activation
+# since state=activated always results in a reboot when not already on target.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -58,48 +58,93 @@
   ansible.builtin.meta: end_host
   when: bigip_current_version is defined and bigip_target_version in bigip_current_version
 
-# -----------------------------------------------------------------------------
-# Single module call - install and activate
-# state=activated handles: install -> wait for complete -> reboot
-# timeout=3600 gives up to 1 hour for install + activation
-# Connection drops on reboot - caught by failed_when
-# -----------------------------------------------------------------------------
-
 - name: "UPGRADE | Dry-run mode - skipping install and reboot"
   ansible.builtin.debug:
     msg: "DRY RUN: Would install {{ bigip_image_filename }} to {{ bigip_install_volume }} on {{ ansible_host }}"
   when: bigip_upgrade_dry_run | bool
 
-- name: "UPGRADE | Install and activate image (state=activated)"
+# -----------------------------------------------------------------------------
+# Call 1 - Start activation (returns immediately with volume_uri)
+# -----------------------------------------------------------------------------
+
+- name: "UPGRADE | Call 1 - Start install and activate"
   f5networks.f5_bigip.bigip_software_install:
     image: "{{ bigip_image_filename }}"
     state: activated
     volume: "{{ bigip_install_volume }}"
-    timeout: 3600
-  register: bigip_activate_result
-  failed_when:
-    - bigip_activate_result is failed
-    - >-
-      'Connection' not in (bigip_activate_result.msg | default(''))
-      and 'connection' not in (bigip_activate_result.msg | default(''))
-      and 'reset' not in (bigip_activate_result.msg | default(''))
-      and 'closed' not in (bigip_activate_result.msg | default(''))
-      and 'timed out' not in (bigip_activate_result.msg | default(''))
-      and 'timeout' not in (bigip_activate_result.msg | default(''))
+  register: bigip_activate_task
   when:
     - not bigip_upgrade_dry_run | bool
     - bigip_reboot_after_install | bool
 
+- name: "UPGRADE | Display volume_uri for tracking"
+  ansible.builtin.debug:
+    msg: "Activation started - tracking via volume_uri: {{ bigip_activate_task.volume_uri | default('n/a') }}"
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+
+# -----------------------------------------------------------------------------
+# Call 2 - Poll via volume_uri until complete or device restarts services
+# timeout: 3600 gives up to 1 hour for installation to complete
+# -----------------------------------------------------------------------------
+
+- name: "UPGRADE | Call 2 - Poll installation progress via volume_uri"
+  f5networks.f5_bigip.bigip_software_install:
+    volume_uri: "{{ bigip_activate_task.volume_uri }}"
+    timeout: 3600
+  register: bigip_install_progress
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+    - bigip_activate_task.volume_uri is defined
+  ignore_errors: true
+
+- name: "UPGRADE | Display install progress message"
+  ansible.builtin.debug:
+    msg: "Install progress: {{ bigip_install_progress.message | default('no message') }}"
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+
+# -----------------------------------------------------------------------------
+# Pause if device is restarting services (rebooting)
+# -----------------------------------------------------------------------------
+
+- name: "UPGRADE | Pause 6 minutes - device is restarting services"
+  ansible.builtin.pause:
+    minutes: 6
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+    - bigip_install_progress.message is defined
+    - "'restarting services' in bigip_install_progress.message"
+
+# -----------------------------------------------------------------------------
+# Call 3 - Check again after reboot if device was restarting services
+# -----------------------------------------------------------------------------
+
+- name: "UPGRADE | Call 3 - Check installation progress after reboot"
+  f5networks.f5_bigip.bigip_software_install:
+    volume_uri: "{{ bigip_activate_task.volume_uri }}"
+    timeout: 3600
+  register: bigip_install_final
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+    - bigip_activate_task.volume_uri is defined
+    - bigip_install_progress.message is defined
+    - "'restarting services' in bigip_install_progress.message"
+  ignore_errors: true
+
+# -----------------------------------------------------------------------------
+# Set reboot_triggered - always true after activation unless dry run
+# bigip_wait handles the actual wait for device to come back online
+# -----------------------------------------------------------------------------
+
 - name: "UPGRADE | Set reboot_triggered fact"
   ansible.builtin.set_fact:
-    bigip_reboot_triggered: >-
-      {{ bigip_activate_result is not failed or
-         'Connection' in (bigip_activate_result.msg | default('')) or
-         'connection' in (bigip_activate_result.msg | default('')) or
-         'reset' in (bigip_activate_result.msg | default('')) or
-         'closed' in (bigip_activate_result.msg | default('')) or
-         'timed out' in (bigip_activate_result.msg | default('')) or
-         'timeout' in (bigip_activate_result.msg | default('')) }}
+    bigip_reboot_triggered: true
     cacheable: true
   when:
     - not bigip_upgrade_dry_run | bool
@@ -109,9 +154,7 @@
   ansible.builtin.debug:
     msg: >-
       Activation triggered on {{ ansible_host }}.
-      Connection drop is expected during reboot.
-      bigip_wait will poll until device is back online.
+      bigip_wait will now poll until the device is back online.
   when:
     - not bigip_upgrade_dry_run | bool
     - bigip_reboot_after_install | bool
-    - bigip_reboot_triggered | default(false) | bool

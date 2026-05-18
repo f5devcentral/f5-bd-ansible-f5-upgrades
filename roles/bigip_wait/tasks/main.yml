@@ -22,7 +22,7 @@
 #                         after firmware updates - this catches that condition
 # =============================================================================
 
-- name: "WAIT | Skip - reboot was not triggered"
+- name: "WAIT | Skip - reboot was not triggered (dry run or reboot disabled)"
   ansible.builtin.meta: end_host
   when: not bigip_reboot_triggered | default(false) | bool
 
