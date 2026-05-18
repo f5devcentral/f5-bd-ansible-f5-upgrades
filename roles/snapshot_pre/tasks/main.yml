@@ -165,7 +165,6 @@
     create_on_missing: true
     fail_on_missing: false
   register: snap_ucs_save
-  delegate_to: localhost
   when: bigip_snapshot_save_ucs | bool
 
 # -----------------------------------------------------------------------------
