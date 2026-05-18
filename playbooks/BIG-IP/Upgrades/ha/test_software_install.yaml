@@ -48,10 +48,7 @@
 
     - name: "TEST | Call 1 result"
       ansible.builtin.debug:
-        msg:
-          changed: "{{ call1_result.changed }}"
-          message: "{{ call1_result.message | default('none') }}"
-          volume_uri: "{{ call1_result.volume_uri | default('none') }}"
+        msg: "changed={{ call1_result.changed }} | message={{ call1_result.message | default('none') }} | volume_uri={{ call1_result.volume_uri | default('none') }}"
       when: not bigip_skip_install | bool
 
     - name: "TEST | Set volume_uri to use for polling"
@@ -78,5 +75,38 @@
 
     - name: "TEST | Call 2 result"
       ansible.builtin.debug:
-        msg:
-          failed: "{{ call2_result
+        msg: "failed={{ call2_result is failed }} | message={{ call2_result.message | default('none') }} | error={{ call2_result.msg | default('none') }}"
+
+    - name: "TEST | Reset connection"
+      ansible.builtin.meta: reset_connection
+
+    - name: "TEST | Pause 90s after reset"
+      ansible.builtin.pause:
+        seconds: 90
+
+    - name: "TEST | Call 3 - volume_uri poll after reset+pause"
+      f5networks.f5_bigip.bigip_software_install:
+        volume_uri: "{{ test_volume_uri }}"
+        timeout: 60
+      register: call3_result
+      failed_when: false
+
+    - name: "TEST | Call 3 result"
+      ansible.builtin.debug:
+        msg: "failed={{ call3_result is failed }} | message={{ call3_result.message | default('none') }} | error={{ call3_result.msg | default('none') }}"
+
+    - name: "TEST | Summary"
+      ansible.builtin.debug:
+        msg: >-
+          Call2 socket_error={{ 'socket path' in (call2_result.msg | default('')) }}
+          message={{ call2_result.message | default(call2_result.msg | default('none')) }} |
+          Call3 socket_error={{ 'socket path' in (call3_result.msg | default('')) }}
+          message={{ call3_result.message | default(call3_result.msg | default('none')) }} |
+          Conclusion:
+          {%- if not ('socket path' in (call2_result.msg | default(''))) %}
+          Call 2 succeeded - socket stays alive after activation
+          {%- elif not ('socket path' in (call3_result.msg | default(''))) %}
+          Reset+pause fixes socket - use reset_connection before polling
+          {%- else %}
+          Both calls failed - use bigip_wait only
+          {%- endif %}
