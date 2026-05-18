@@ -158,10 +158,12 @@
 # Save UCS backup on device (stored locally on BIG-IP for later fetch)
 # -----------------------------------------------------------------------------
 
-- name: "SNAPSHOT_PRE | Save UCS backup on device"
-  f5networks.f5_bigip.bigip_ucs:
-    name: "pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}"
-    state: present
+- name: "SNAPSHOT_PRE | Save and fetch UCS backup from BIG-IP to EE"
+  f5networks.f5_bigip.bigip_ucs_fetch:
+    src: "pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}"
+    dest: "{{ snapshot_output_dir }}/"
+    create_on_missing: true
+    fail_on_missing: false
   register: snap_ucs_save
   delegate_to: localhost
   when: bigip_snapshot_save_ucs | bool

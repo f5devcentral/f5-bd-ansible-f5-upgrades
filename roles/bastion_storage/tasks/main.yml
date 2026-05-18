@@ -70,37 +70,24 @@
   become: true
 
 # -----------------------------------------------------------------------------
-# Step 3 - Fetch UCS from BIG-IP to EE using the F5 module
-# bigip_ucs_fetch saves and downloads the UCS to the EE runner filesystem.
-# dest is a directory - module writes <dest>/<ucs_name>.ucs
+# Step 3 - UCS is already on the EE - downloaded by snapshot_pre role
+# snapshot_pre runs bigip_ucs_fetch which saves + downloads in one step.
+# File is at: {{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs
 # -----------------------------------------------------------------------------
 
-- name: "BASTION_STORAGE | Ensure UCS staging directory exists on EE"
-  ansible.builtin.file:
-    path: "{{ snapshot_output_dir }}"
-    state: directory
-    mode: '0755'
+- name: "BASTION_STORAGE | Verify UCS file exists on EE"
+  ansible.builtin.stat:
+    path: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
+  register: ucs_stat
   delegate_to: localhost
   when: bigip_snapshot_save_ucs | default(true) | bool
 
-- name: "BASTION_STORAGE | Fetch UCS from BIG-IP to EE (save + download)"
-  f5networks.f5_bigip.bigip_ucs_fetch:
-    src: "{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre_upgrade"
-    dest: "{{ snapshot_output_dir }}/"
-    create_on_missing: true
-    fail_on_missing: false
-  register: ucs_fetch_result
-  delegate_to: localhost
-  when: bigip_snapshot_save_ucs | default(true) | bool
-
-- name: "BASTION_STORAGE | UCS fetched to EE"
+- name: "BASTION_STORAGE | UCS file confirmed on EE"
   ansible.builtin.debug:
-    msg: >-
-      UCS downloaded to EE:
-      {{ snapshot_output_dir }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre_upgrade.ucs
+    msg: "UCS ready on EE: {{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
   when:
     - bigip_snapshot_save_ucs | default(true) | bool
-    - ucs_fetch_result is not failed
+    - ucs_stat.stat.exists | default(false)
 
 # -----------------------------------------------------------------------------
 # Step 4 - Copy UCS from EE -> bastion CIFS mount
@@ -109,8 +96,8 @@
 
 - name: "BASTION_STORAGE | Copy UCS to bastion"
   ansible.builtin.copy:
-    src: "{{ snapshot_output_dir }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre_upgrade.ucs"
-    dest: "{{ bastion_device_backup_path }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre_upgrade.ucs"
+    src: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
+    dest: "{{ bastion_device_backup_path }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
     mode: '0644'
   delegate_to: bastion
   vars:
@@ -118,7 +105,7 @@
   become: true
   when:
     - bigip_snapshot_save_ucs | default(true) | bool
-    - ucs_fetch_result is not failed
+    - ucs_stat.stat.exists | default(false)
   register: ucs_copy_result
   ignore_errors: true
 
@@ -127,7 +114,7 @@
     msg: >-
       WARNING: UCS copy to bastion failed for {{ inventory_hostname }}.
       Upgrade completed successfully. UCS is still on the EE at:
-      {{ snapshot_output_dir }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre_upgrade.ucs
+      {{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs
   when:
     - bigip_snapshot_save_ucs | default(true) | bool
     - ucs_copy_result is defined
