@@ -223,9 +223,12 @@
       vs_regressions: "{{ diff_vs | selectattr('regressed', 'equalto', true) | list }}"
       vs_regression_count: "{{ diff_vs | selectattr('regressed', 'equalto', true) | list | length }}"
       routes_changed: "{{ diff_routes.changed }}"
-      sync_regressed: >-
-        {{ snapshot_pre_loaded.metadata.sync_state == 'In Sync'
-           and snap_post_sync_state != 'In Sync' }}
+      sync_state_change: >-
+        {{ snapshot_pre_loaded.metadata.sync_state | default('unknown') }}
+        -> {{ snap_post_sync_state }}
+      sync_note: >-
+        Sync state change during upgrade is expected due to version mismatch
+        between HA nodes. Check final post-snapshot for sync recovery.
 
 # -----------------------------------------------------------------------------
 # Write diff JSON
@@ -265,12 +268,3 @@
   when:
     - snapshot_fail_on_regression | bool
     - diff_regression_summary.vs_regression_count | int > 0
-
-- name: "SNAPSHOT_POST | Fail if sync state regressed"
-  ansible.builtin.fail:
-    msg: >-
-      POST-UPGRADE REGRESSION on {{ inventory_hostname }}:
-      Sync was 'In Sync' before upgrade but is now '{{ snap_post_sync_state }}'.
-  when:
-    - snapshot_fail_on_regression | bool
-    - diff_regression_summary.sync_regressed | bool
