@@ -10,16 +10,14 @@
 #
 # Layer sequence:
 #   1. Initial delay    - let the reboot actually start before probing
-#   2. SSH port down    - confirm reboot began (port 22 goes away)
-#   3. SSH port up      - kernel + sshd are running again
-#   4. HTTPS port up    - nginx/httpd stack is listening
-#   5. REST echo        - /mgmt/shared/echo returns {"stage":"STARTED"}
-#                         only when REST framework is fully initialised
-#   6. mcpd ready       - /mgmt/tm/sys/version responds (config plane ready)
-#   7. Deep validation  - /mgmt/tm/ltm/virtual and /mgmt/tm/cm/sync-status
-#                         confirms LTM loaded config and HA is aware
-#                         Physical devices may show portal before truly ready
-#                         after firmware updates - this catches that condition
+#   2. SSH port check   - if already up, skip down/up layers (device came
+#                         back during install pause)
+#   3. SSH port down    - confirm reboot began (skipped if already up)
+#   4. SSH port up      - kernel + sshd running (skipped if already up)
+#   5. HTTPS port up    - nginx/httpd stack is listening
+#   6. REST echo        - /mgmt/shared/echo returns {"stage":"STARTED"}
+#   7. mcpd ready       - /mgmt/tm/sys/version responds
+#   8. Deep validation  - LTM config loaded, HA sync-status aware
 # =============================================================================
 
 - name: "WAIT | Skip - reboot was not triggered (dry run or reboot disabled)"
@@ -31,6 +29,30 @@
     timeout: "{{ bigip_reboot_initial_delay }}"
   delegate_to: localhost
 
+# -----------------------------------------------------------------------------
+# Check if device is already back online before running port down/up layers
+# If the 6 min pause in bigip_upgrade was enough for a full reboot cycle,
+# the SSH port will already be up - skip straight to HTTPS/REST checks
+# -----------------------------------------------------------------------------
+
+- name: "WAIT | Check if SSH port is already up"
+  ansible.builtin.wait_for:
+    host: "{{ bigip_wait_host }}"
+    port: "{{ bigip_ssh_port }}"
+    state: started
+    timeout: 5
+    sleep: 1
+  register: bigip_ssh_already_up
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: "WAIT | Device already back online - skipping port down/up layers"
+  ansible.builtin.debug:
+    msg: >-
+      SSH port already up on {{ bigip_wait_host }} - device came back during
+      the install pause. Skipping Layers 1 and 2, proceeding to REST checks.
+  when: bigip_ssh_already_up is not failed
+
 - name: "WAIT | Layer 1 - wait for SSH port to go DOWN (reboot started)"
   ansible.builtin.wait_for:
     host: "{{ bigip_wait_host }}"
@@ -39,7 +61,8 @@
     timeout: 300
     sleep: 5
   delegate_to: localhost
-  ignore_errors: true  # Some platforms close SSH before we get here - not fatal
+  ignore_errors: true
+  when: bigip_ssh_already_up is failed
 
 - name: "WAIT | Layer 2 - wait for SSH port to come UP (kernel running)"
   ansible.builtin.wait_for:
@@ -49,6 +72,7 @@
     timeout: 600
     sleep: 10
   delegate_to: localhost
+  when: bigip_ssh_already_up is failed
 
 - name: "WAIT | Layer 3 - wait for HTTPS port to come UP (web stack running)"
   ansible.builtin.wait_for:
@@ -108,16 +132,6 @@
         .get('entries', {})
         .get('Version', {})
         .get('description', 'unknown') }}
-
-# -----------------------------------------------------------------------------
-# Layer 6 - Deep REST API validation
-# Physical devices (especially after firmware updates) may return HTTPS/echo
-# responses before LTM has fully loaded config and HA is re-established.
-# Poll these endpoints until they return meaningful data:
-#   - /mgmt/tm/ltm/virtual  confirms LTM config is loaded
-#   - /mgmt/tm/cm/sync-status/stats confirms HA awareness
-# This is the final gate before declaring the device truly ready.
-# -----------------------------------------------------------------------------
 
 - name: "WAIT | Layer 6 - poll /mgmt/tm/ltm/virtual until LTM config loaded"
   ansible.builtin.uri:
