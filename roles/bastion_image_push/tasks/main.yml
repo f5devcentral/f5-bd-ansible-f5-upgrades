@@ -113,7 +113,7 @@
   register: bigip_image_verify
   until:
     - bigip_image_verify.status == 200
-    - bigip_image_verify.json.status is defined
+    - bigip_image_verify.json.verified is defined
     - bigip_image_verify.json.verified == 'yes'
   retries: 30
   delay: 15
