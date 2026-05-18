@@ -5,15 +5,10 @@
 # bastion CIFS --> curl chunked HTTPS POST --> BIG-IP iControl REST API
 #
 # REQUIREMENT: curl must be installed on the bastion (present on all Linux).
-#              sshpass NOT required - no SSH to BIG-IP involved.
 #
-# Uses iControl REST chunked file upload endpoint:
-#   POST /mgmt/shared/file-transfer/uploads/<filename>
-#   Content-Range: bytes <start>-<end>/<total>
-#
-# Authenticates with ansible_user/ansible_password from AAP vault over HTTPS.
-# Chunk size 512KB matches BIG-IP iControl REST expectations.
-# dd reads each chunk with bs=512k skip=N (fast - not bs=1).
+# Credentials are written to a temporary .netrc file on the bastion so that
+# special characters in passwords are handled safely without shell escaping.
+# The .netrc file is removed immediately after the upload completes.
 # =============================================================================
 
 - name: "BASTION_PUSH | Verify image exists on bastion CIFS mount"
@@ -58,14 +53,29 @@
     msg: "{{ bigip_image_filename }} already registered on {{ inventory_hostname }} - skipping."
   when: bigip_image_already_present | bool
 
+# -----------------------------------------------------------------------------
+# Write .netrc file - handles special characters safely, curl reads from file
+# so the password never appears in the shell command line or process list
+# -----------------------------------------------------------------------------
+
+- name: "BASTION_PUSH | Write temporary .netrc file on bastion"
+  ansible.builtin.copy:
+    dest: "/tmp/.bigip_netrc_{{ ansible_host }}"
+    mode: '0600'
+    content: "machine {{ ansible_host }} login {{ ansible_user }} password {{ ansible_password | default(ansible_httpapi_password) }}"
+  delegate_to: bastion
+  vars:
+    ansible_connection: ssh
+  when: not bigip_image_already_present | bool
+  # TROUBLESHOOTING: no_log: true
+
 - name: "BASTION_PUSH | Upload image to BIG-IP via iControl REST chunked upload"
   ansible.builtin.shell: |
     FILEPATH="{{ bastion_image_path }}/{{ bigip_image_filename }}"
     FILENAME="{{ bigip_image_filename }}"
     HOST="{{ ansible_host }}"
     PORT="{{ bigip_https_port | default(443) }}"
-    USER="{{ ansible_user }}"
-    PASS="{{ ansible_password | default(ansible_httpapi_password) }}"
+    NETRC="/tmp/.bigip_netrc_{{ ansible_host }}"
     CHUNK_SIZE=524288
 
     FILESIZE=$(stat -c%s "$FILEPATH")
@@ -84,7 +94,7 @@
         curl -sk \
           -w "%{http_code}" \
           -o /dev/null \
-          -u "${USER}:${PASS}" \
+          --netrc-file "$NETRC" \
           -H "Content-Type: application/octet-stream" \
           -H "Content-Range: bytes ${START}-${END}/${FILESIZE}" \
           -H "Content-Length: ${CHUNK_BYTES}" \
@@ -94,6 +104,7 @@
 
       if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
         echo "ERROR: chunk ${CHUNK_NUM} failed (bytes ${START}-${END}) HTTP ${HTTP_CODE}"
+        rm -f "$NETRC"
         exit 1
       fi
 
@@ -106,6 +117,7 @@
       fi
     done
 
+    rm -f "$NETRC"
     echo "Upload complete: ${CHUNK_NUM} chunks, ${FILESIZE} bytes"
   args:
     executable: /bin/bash
@@ -116,7 +128,15 @@
   register: bastion_upload_result
   async: 3600
   poll: 30
-  # TROUBLESHOOTING: no_log: true
+
+- name: "BASTION_PUSH | Ensure .netrc file is removed from bastion"
+  ansible.builtin.file:
+    path: "/tmp/.bigip_netrc_{{ ansible_host }}"
+    state: absent
+  delegate_to: bastion
+  vars:
+    ansible_connection: ssh
+  when: not bigip_image_already_present | bool
 
 - name: "BASTION_PUSH | Upload complete"
   ansible.builtin.debug:
