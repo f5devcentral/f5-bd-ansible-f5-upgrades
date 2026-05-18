@@ -2,15 +2,18 @@
 # =============================================================================
 # bastion_image_push
 # =============================================================================
-# bastion CIFS --> sshpass + SCP --> BIG-IP /shared/images/
+# bastion CIFS --> curl chunked HTTPS POST --> BIG-IP iControl REST API
 #
-# REQUIREMENT: sshpass must be installed on the bastion host.
-#   RHEL/Rocky:  sudo yum install -y sshpass
-#   Ubuntu:      sudo apt install -y sshpass
+# REQUIREMENT: curl must be installed on the bastion (present on all Linux).
+#              sshpass NOT required - no SSH to BIG-IP involved.
 #
-# sshpass feeds the BIG-IP SSH password non-interactively to SCP.
-# Password comes from the AAP vault credential (ansible_password).
-# No SSH keys required between bastion and BIG-IP.
+# Uses iControl REST chunked file upload endpoint:
+#   POST /mgmt/shared/file-transfer/uploads/<filename>
+#   Content-Range: bytes <start>-<end>/<total>
+#
+# Authenticates with ansible_user/ansible_password from AAP vault over HTTPS.
+# Chunk size 512KB matches BIG-IP iControl REST expectations.
+# dd reads each chunk with bs=512k skip=N (fast - not bs=1).
 # =============================================================================
 
 - name: "BASTION_PUSH | Verify image exists on bastion CIFS mount"
@@ -50,37 +53,74 @@
          | selectattr('name', 'equalto', bigip_image_filename)
          | list | length > 0 }}
 
-- name: "BASTION_PUSH | Image already on BIG-IP - skipping transfer"
+- name: "BASTION_PUSH | Image already on BIG-IP - skipping upload"
   ansible.builtin.debug:
     msg: "{{ bigip_image_filename }} already registered on {{ inventory_hostname }} - skipping."
   when: bigip_image_already_present | bool
 
-- name: "BASTION_PUSH | SCP image from bastion to BIG-IP /shared/images/"
-  ansible.builtin.shell: >
-    sshpass -p '{{ ansible_password | default(ansible_httpapi_password) }}'
-    scp -P {{ bigip_ssh_port | default(22) }}
-    -o StrictHostKeyChecking=no
-    -o PreferredAuthentications=password
-    -o PasswordAuthentication=yes
-    -o PubkeyAuthentication=no
-    {{ bastion_image_path }}/{{ bigip_image_filename }}
-    {{ ansible_user }}@{{ ansible_host }}:/shared/images/{{ bigip_image_filename }}
+- name: "BASTION_PUSH | Upload image to BIG-IP via iControl REST chunked upload"
+  ansible.builtin.shell: |
+    FILEPATH="{{ bastion_image_path }}/{{ bigip_image_filename }}"
+    FILENAME="{{ bigip_image_filename }}"
+    HOST="{{ ansible_host }}"
+    PORT="{{ bigip_https_port | default(443) }}"
+    USER="{{ ansible_user }}"
+    PASS="{{ ansible_password | default(ansible_httpapi_password) }}"
+    CHUNK_SIZE=524288
+
+    FILESIZE=$(stat -c%s "$FILEPATH")
+    CHUNK_NUM=0
+    START=0
+    TOTAL_CHUNKS=$(( (FILESIZE + CHUNK_SIZE - 1) / CHUNK_SIZE ))
+
+    echo "Uploading ${FILENAME} (${FILESIZE} bytes, ${TOTAL_CHUNKS} chunks)"
+
+    while [ $START -lt $FILESIZE ]; do
+      END=$((START + CHUNK_SIZE - 1))
+      [ $END -ge $FILESIZE ] && END=$((FILESIZE - 1))
+      CHUNK_BYTES=$((END - START + 1))
+
+      HTTP_CODE=$(dd if="$FILEPATH" bs=$CHUNK_SIZE skip=$CHUNK_NUM count=1 2>/dev/null | \
+        curl -sk \
+          -w "%{http_code}" \
+          -o /dev/null \
+          -u "${USER}:${PASS}" \
+          -H "Content-Type: application/octet-stream" \
+          -H "Content-Range: bytes ${START}-${END}/${FILESIZE}" \
+          -H "Content-Length: ${CHUNK_BYTES}" \
+          -H "Connection: keep-alive" \
+          --data-binary @- \
+          "https://${HOST}:${PORT}/mgmt/shared/file-transfer/uploads/${FILENAME}")
+
+      if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+        echo "ERROR: chunk ${CHUNK_NUM} failed (bytes ${START}-${END}) HTTP ${HTTP_CODE}"
+        exit 1
+      fi
+
+      CHUNK_NUM=$((CHUNK_NUM + 1))
+      START=$((END + 1))
+
+      if [ $((CHUNK_NUM % 100)) -eq 0 ]; then
+        PCT=$((START * 100 / FILESIZE))
+        echo "Progress: ${PCT}% (chunk ${CHUNK_NUM}/${TOTAL_CHUNKS})"
+      fi
+    done
+
+    echo "Upload complete: ${CHUNK_NUM} chunks, ${FILESIZE} bytes"
   args:
     executable: /bin/bash
   delegate_to: bastion
   vars:
     ansible_connection: ssh
   when: not bigip_image_already_present | bool
-  register: bastion_scp_result
+  register: bastion_upload_result
   async: 3600
   poll: 30
   # TROUBLESHOOTING: no_log: true
 
-- name: "BASTION_PUSH | Transfer complete"
+- name: "BASTION_PUSH | Upload complete"
   ansible.builtin.debug:
-    msg: >-
-      Transfer complete: {{ bigip_image_filename }}
-      -> {{ inventory_hostname }} ({{ ansible_host }}):/shared/images/
+    msg: "{{ bastion_upload_result.stdout_lines | last | default('Upload complete') }}"
   when: not bigip_image_already_present | bool
 
 - name: "BASTION_PUSH | Poll BIG-IP until image is verified and ready"
