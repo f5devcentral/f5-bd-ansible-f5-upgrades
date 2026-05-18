@@ -2,8 +2,7 @@
 # =============================================================================
 # TEST PLAYBOOK - Isolate bigip_software_install volume_uri socket issue
 # =============================================================================
-# IMPORTANT: target_host is REQUIRED and must be a single host - never run
-# this against both HA nodes simultaneously as it will trigger two installs.
+# IMPORTANT: target_host is REQUIRED and must be a single host.
 #
 # Usage - full test (triggers install):
 #   ansible-playbook playbooks/BIG-IP/Tests/test_software_install.yaml \
@@ -13,29 +12,21 @@
 # Usage - skip install, test polling only (install already triggered):
 #   ansible-playbook playbooks/BIG-IP/Tests/test_software_install.yaml \
 #     -i inventory/hosts.ini \
-#     -e "target_host=Demo-16x-Node2 bigip_skip_install=true bigip_test_volume_uri=/mgmt/tm/sys/software/volume/HD1.2"
+#     -e "target_host=Demo-16x-Node2 bigip_skip_install=true bigip_install_volume=HD1.2"
 #
 # AAP: Set Job Template Limit and Extra Variables to "Prompt on launch"
-#      to prevent accidental multi-host runs.
-#
-# target_host           - REQUIRED - single inventory hostname to test against
-# bigip_skip_install    - true = skip install, poll only (default: false)
-# bigip_test_volume_uri - volume_uri to poll when skipping install
 # =============================================================================
 
-- name: "TEST - bigip_software_install volume_uri socket isolation"
+- name: "TEST - bigip_software_install volume status polling"
   hosts: "{{ target_host | mandatory }}"
   gather_facts: false
   vars:
     bigip_skip_install: false
-    bigip_test_volume_uri: "/mgmt/tm/sys/software/volume/{{ bigip_install_volume | default('HD1.2') }}"
   tasks:
 
     - name: "TEST | SKIPPING Call 1 - install already triggered"
       ansible.builtin.debug:
-        msg: >-
-          Skipping install - polling only.
-          Using volume_uri: {{ bigip_test_volume_uri }}
+        msg: "Skipping install - polling volume status only for {{ bigip_install_volume | default('HD1.2') }}"
       when: bigip_skip_install | bool
 
     - name: "TEST | Call 1 - state=activated (starts install)"
@@ -51,62 +42,48 @@
         msg: "changed={{ call1_result.changed }} | message={{ call1_result.message | default('none') }} | volume_uri={{ call1_result.volume_uri | default('none') }}"
       when: not bigip_skip_install | bool
 
-    - name: "TEST | Set volume_uri to use for polling"
-      ansible.builtin.set_fact:
-        test_volume_uri: >-
-          {{ call1_result.volume_uri
-             if not bigip_skip_install | bool
-             else bigip_test_volume_uri }}
-
-    - name: "TEST | Volume URI for polling"
-      ansible.builtin.debug:
-        msg: "Polling volume_uri: {{ test_volume_uri }}"
-
     - name: "TEST | Pause 10s before first poll"
       ansible.builtin.pause:
         seconds: 10
 
-    - name: "TEST | Call 2 - volume_uri poll (no reset, immediate)"
-      f5networks.f5_bigip.bigip_software_install:
-        volume_uri: "{{ test_volume_uri }}"
-        timeout: 600
-      register: call2_result
+    - name: "TEST | Poll volume status via URI (10 polls x 30s = 5 min)"
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/tm/sys/software/volume/{{ bigip_install_volume | default('HD1.2') }}"
+        method: GET
+        user: "{{ ansible_user }}"
+        password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 200
+        timeout: 30
+      register: volume_poll
+      delegate_to: localhost
+      retries: 10
+      delay: 30
+      until: volume_poll.status == 200
       failed_when: false
+      # TROUBLESHOOTING: no_log: true
 
-    - name: "TEST | Call 2 result"
+    - name: "TEST | Volume status result"
       ansible.builtin.debug:
-        msg: "failed={{ call2_result is failed }} | message={{ call2_result.message | default('none') }} | error={{ call2_result.msg | default('none') }}"
-
-    - name: "TEST | Reset connection"
-      ansible.builtin.meta: reset_connection
-
-    - name: "TEST | Pause 90s after reset"
-      ansible.builtin.pause:
-        seconds: 90
-
-    - name: "TEST | Call 3 - volume_uri poll after reset+pause"
-      f5networks.f5_bigip.bigip_software_install:
-        volume_uri: "{{ test_volume_uri }}"
-        timeout: 600
-      register: call3_result
-      failed_when: false
-
-    - name: "TEST | Call 3 result"
-      ansible.builtin.debug:
-        msg: "failed={{ call3_result is failed }} | message={{ call3_result.message | default('none') }} | error={{ call3_result.msg | default('none') }}"
+        msg: >-
+          Volume {{ bigip_install_volume | default('HD1.2') }} status:
+          status={{ volume_poll.json.status | default('unknown') }} |
+          version={{ volume_poll.json.version | default('unknown') }} |
+          active={{ volume_poll.json.active | default('unknown') }} |
+          build={{ volume_poll.json.build | default('unknown') }}
 
     - name: "TEST | Summary"
       ansible.builtin.debug:
         msg: >-
-          Call2 socket_error={{ 'socket path' in (call2_result.msg | default('')) }}
-          message={{ call2_result.message | default(call2_result.msg | default('none')) }} |
-          Call3 socket_error={{ 'socket path' in (call3_result.msg | default('')) }}
-          message={{ call3_result.message | default(call3_result.msg | default('none')) }} |
-          Conclusion:
-          {%- if not ('socket path' in (call2_result.msg | default(''))) %}
-          Call 2 succeeded - socket stays alive after activation
-          {%- elif not ('socket path' in (call3_result.msg | default(''))) %}
-          Reset+pause fixes socket - use reset_connection before polling
+          {%- if volume_poll.json.status | default('') == 'complete' %}
+          RESULT: Volume install complete - ready for activation/reboot
+          {%- elif volume_poll.json.status | default('') in ['installing', 'testing archives'] %}
+          RESULT: Still installing - status={{ volume_poll.json.status }}
+          {%- elif volume_poll.status | default(0) != 200 %}
+          RESULT: Could not reach BIG-IP - device may be rebooting
           {%- else %}
-          Both calls failed - use bigip_wait only
+          RESULT: Unknown status={{ volume_poll.json.status | default('none') }}
           {%- endif %}
+          URI polling works without persistent socket - consider replacing
+          module volume_uri polling with URI polling in production code.
