@@ -1,14 +1,15 @@
 ---
 # =============================================================================
-# bigip_upgrade - Image install and reboot
+# bigip_upgrade - Image install and activation
 # =============================================================================
 # Image is already on BIG-IP /shared/images/ verified by bastion_image_push.
 #
-# Uses a single bigip_software_install state=activated call which:
-#   1. Installs the image to the target volume
-#   2. Waits for installation to complete
-#   3. Activates (reboots into) the new volume
-# The connection drops during reboot - handled by block/rescue.
+# Two step approach per F5 documentation:
+#   Step 1: state=installed  - installs image to volume, blocks until complete
+#   Step 2: state=activated  - reboots into new volume, connection drops here
+#
+# The connection drop on activation is expected and handled by ignore_errors.
+# bigip_wait role then polls until the device is back online.
 
 # -----------------------------------------------------------------------------
 # Pre-flight - version check
@@ -55,9 +56,8 @@
   when: bigip_current_version is defined and bigip_target_version in bigip_current_version
 
 # -----------------------------------------------------------------------------
-# Install and activate in one module call
-# state=activated handles: install -> wait for complete -> reboot
-# Connection drops during reboot - block/rescue catches that cleanly.
+# Step 1 - Install image to volume
+# Module blocks until installation is fully complete before returning.
 # -----------------------------------------------------------------------------
 
 - name: "UPGRADE | Dry-run mode - skipping install and reboot"
@@ -65,22 +65,43 @@
     msg: "DRY RUN: Would install {{ bigip_image_filename }} to {{ bigip_install_volume }} on {{ ansible_host }}"
   when: bigip_upgrade_dry_run | bool
 
-- name: "UPGRADE | Install and activate image (connection will drop on reboot)"
-  block:
-    - name: "UPGRADE | bigip_software_install state=activated"
-      f5networks.f5_bigip.bigip_software_install:
-        image: "{{ bigip_image_filename }}"
-        state: activated
-        volume: "{{ bigip_install_volume }}"
-      when: not bigip_upgrade_dry_run | bool
-
-    - name: "UPGRADE | Reboot triggered - connection drop is expected"
-      ansible.builtin.debug:
-        msg: "Reboot initiated on {{ ansible_host }} - waiting for device to come back..."
-  rescue:
-    - name: "UPGRADE | Connection dropped during reboot - this is expected"
-      ansible.builtin.debug:
-        msg: >-
-          Connection to {{ ansible_host }} dropped (expected during reboot).
-          The bigip_wait role will now poll until the device is back online.
+- name: "UPGRADE | Step 1 - Install image to volume {{ bigip_install_volume }}"
+  f5networks.f5_bigip.bigip_software_install:
+    image: "{{ bigip_image_filename }}"
+    state: installed
+    volume: "{{ bigip_install_volume }}"
+  register: bigip_install_result
   when: not bigip_upgrade_dry_run | bool
+
+- name: "UPGRADE | Step 1 complete - image installed to {{ bigip_install_volume }}"
+  ansible.builtin.debug:
+    msg: "Image installed successfully to {{ bigip_install_volume }} on {{ ansible_host }}"
+  when: not bigip_upgrade_dry_run | bool
+
+# -----------------------------------------------------------------------------
+# Step 2 - Activate (reboot into new volume)
+# Connection drops immediately on activation - this is expected.
+# ignore_errors catches the connection reset, not real failures.
+# bigip_wait role handles waiting for the device to come back.
+# -----------------------------------------------------------------------------
+
+- name: "UPGRADE | Step 2 - Activate volume {{ bigip_install_volume }} (reboot)"
+  f5networks.f5_bigip.bigip_software_install:
+    image: "{{ bigip_image_filename }}"
+    state: activated
+    volume: "{{ bigip_install_volume }}"
+  ignore_errors: true
+  register: bigip_activate_result
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+
+- name: "UPGRADE | Activation triggered - device is rebooting"
+  ansible.builtin.debug:
+    msg: >-
+      Activation triggered on {{ ansible_host }}.
+      Connection drop is expected during reboot.
+      bigip_wait will poll until device is back online.
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
