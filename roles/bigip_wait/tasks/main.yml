@@ -6,16 +6,25 @@
 # because the httpapi connection to the device is dead during reboot.
 # The controller polls the device's management IP directly over TCP/HTTPS.
 #
+# Only runs if bigip_reboot_triggered is true.
+#
 # Layer sequence:
-#   1. Initial delay  - let the reboot actually start before probing
-#   2. SSH port down  - confirm reboot began (port 22 goes away)
-#   3. SSH port up    - kernel + sshd are running again
-#   4. HTTPS port up  - nginx/httpd stack is listening
-#   5. REST echo poll - /mgmt/shared/echo returns {"stage":"STARTED"}
-#                       only when REST framework is fully initialised
-#                       (works BIG-IP 13.1+ - no /mgmt/tm/sys/ready needed)
-#   6. mcpd check     - tmsh responds without error = config plane ready
+#   1. Initial delay    - let the reboot actually start before probing
+#   2. SSH port down    - confirm reboot began (port 22 goes away)
+#   3. SSH port up      - kernel + sshd are running again
+#   4. HTTPS port up    - nginx/httpd stack is listening
+#   5. REST echo        - /mgmt/shared/echo returns {"stage":"STARTED"}
+#                         only when REST framework is fully initialised
+#   6. mcpd ready       - /mgmt/tm/sys/version responds (config plane ready)
+#   7. Deep validation  - /mgmt/tm/ltm/virtual and /mgmt/tm/cm/sync-status
+#                         confirms LTM loaded config and HA is aware
+#                         Physical devices may show portal before truly ready
+#                         after firmware updates - this catches that condition
 # =============================================================================
+
+- name: "WAIT | Skip - reboot was not triggered"
+  ansible.builtin.meta: end_host
+  when: not bigip_reboot_triggered | default(false) | bool
 
 - name: "WAIT | Initial delay - allow reboot to begin"
   ansible.builtin.wait_for:
@@ -50,7 +59,7 @@
     sleep: 10
   delegate_to: localhost
 
-- name: "WAIT | Layer 4 - poll REST /mgmt/shared/echo until REST framework ready"
+- name: "WAIT | Layer 4 - poll /mgmt/shared/echo until REST framework ready"
   ansible.builtin.uri:
     url: "https://{{ bigip_wait_host }}:{{ bigip_https_port }}/mgmt/shared/echo"
     method: GET
@@ -60,6 +69,7 @@
     validate_certs: false
     status_code: 200
     return_content: true
+    timeout: 30
   register: bigip_rest_echo
   until:
     - bigip_rest_echo.status == 200
@@ -69,9 +79,9 @@
   retries: "{{ bigip_wait_max_retries }}"
   delay: "{{ bigip_wait_retry_delay }}"
   delegate_to: localhost
-  # TROUBLESHOOTING: no_log: true  # Suppress password from logs
+  # TROUBLESHOOTING: no_log: true
 
-- name: "WAIT | Layer 5 - verify mcpd is ready via /mgmt/tm/sys/version"
+- name: "WAIT | Layer 5 - poll /mgmt/tm/sys/version until mcpd ready"
   ansible.builtin.uri:
     url: "https://{{ bigip_wait_host }}:{{ bigip_https_port }}/mgmt/tm/sys/version"
     method: GET
@@ -80,6 +90,7 @@
     force_basic_auth: true
     validate_certs: false
     status_code: 200
+    timeout: 30
   register: bigip_version_check
   until: bigip_version_check.status == 200
   retries: "{{ bigip_wait_max_retries }}"
@@ -87,13 +98,126 @@
   delegate_to: localhost
   # TROUBLESHOOTING: no_log: true
 
-- name: "WAIT | Display post-reboot version"
+- name: "WAIT | Layer 5 result - post-reboot version"
   ansible.builtin.debug:
     msg: >-
-      {{ bigip_wait_host }} is back online.
+      {{ bigip_wait_host }} mcpd ready.
       Version: {{ bigip_version_check.json.get('entries', {})
         .get('https://localhost/mgmt/tm/sys/version/0', {})
         .get('nestedStats', {})
         .get('entries', {})
         .get('Version', {})
         .get('description', 'unknown') }}
+
+# -----------------------------------------------------------------------------
+# Layer 6 - Deep REST API validation
+# Physical devices (especially after firmware updates) may return HTTPS/echo
+# responses before LTM has fully loaded config and HA is re-established.
+# Poll these endpoints until they return meaningful data:
+#   - /mgmt/tm/ltm/virtual  confirms LTM config is loaded
+#   - /mgmt/tm/cm/sync-status/stats confirms HA awareness
+# This is the final gate before declaring the device truly ready.
+# -----------------------------------------------------------------------------
+
+- name: "WAIT | Layer 6 - poll /mgmt/tm/ltm/virtual until LTM config loaded"
+  ansible.builtin.uri:
+    url: "https://{{ bigip_wait_host }}:{{ bigip_https_port }}/mgmt/tm/ltm/virtual"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    timeout: 30
+  register: bigip_ltm_check
+  until:
+    - bigip_ltm_check.status == 200
+    - bigip_ltm_check.json is defined
+    - bigip_ltm_check.json.kind is defined
+  retries: "{{ bigip_wait_max_retries }}"
+  delay: "{{ bigip_wait_retry_delay }}"
+  delegate_to: localhost
+  # TROUBLESHOOTING: no_log: true
+
+- name: "WAIT | Layer 6 - poll /mgmt/tm/cm/sync-status until HA aware"
+  ansible.builtin.uri:
+    url: "https://{{ bigip_wait_host }}:{{ bigip_https_port }}/mgmt/tm/cm/sync-status/stats"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    timeout: 30
+  register: bigip_ha_check
+  until:
+    - bigip_ha_check.status == 200
+    - bigip_ha_check.json is defined
+    - bigip_ha_check.json.get('entries', {})
+        .get('https://localhost/mgmt/tm/cm/sync-status/0/stats', {})
+        .get('nestedStats', {})
+        .get('entries', {})
+        .get('status', {})
+        .get('description', '') | length > 0
+  retries: "{{ bigip_wait_max_retries }}"
+  delay: "{{ bigip_wait_retry_delay }}"
+  delegate_to: localhost
+  # TROUBLESHOOTING: no_log: true
+
+- name: "WAIT | Layer 6 result - HA sync status"
+  ansible.builtin.set_fact:
+    bigip_post_reboot_sync_state: >-
+      {{ bigip_ha_check.json.get('entries', {})
+         .get('https://localhost/mgmt/tm/cm/sync-status/0/stats', {})
+         .get('nestedStats', {})
+         .get('entries', {})
+         .get('status', {})
+         .get('description', 'unknown') }}
+
+- name: "WAIT | Layer 6 - poll sync status until not offline (max 5 min)"
+  ansible.builtin.uri:
+    url: "https://{{ bigip_wait_host }}:{{ bigip_https_port }}/mgmt/tm/cm/sync-status/stats"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    timeout: 30
+  register: bigip_offline_recheck
+  until: >-
+    bigip_offline_recheck.json.get('entries', {})
+    .get('https://localhost/mgmt/tm/cm/sync-status/0/stats', {})
+    .get('nestedStats', {})
+    .get('entries', {})
+    .get('status', {})
+    .get('description', 'unknown') | lower != 'offline'
+  retries: 15
+  delay: 20
+  delegate_to: localhost
+  # TROUBLESHOOTING: no_log: true
+  when: bigip_post_reboot_sync_state | lower == 'offline'
+
+- name: "WAIT | Update sync state fact after offline recheck"
+  ansible.builtin.set_fact:
+    bigip_post_reboot_sync_state: >-
+      {{ bigip_offline_recheck.json.get('entries', {})
+         .get('https://localhost/mgmt/tm/cm/sync-status/0/stats', {})
+         .get('nestedStats', {})
+         .get('entries', {})
+         .get('status', {})
+         .get('description', 'unknown') }}
+  when: bigip_post_reboot_sync_state | lower == 'offline'
+
+- name: "WAIT | Device fully ready"
+  ansible.builtin.debug:
+    msg: >-
+      {{ bigip_wait_host }} is fully ready.
+      Version: {{ bigip_version_check.json.get('entries', {})
+        .get('https://localhost/mgmt/tm/sys/version/0', {})
+        .get('nestedStats', {})
+        .get('entries', {})
+        .get('Version', {})
+        .get('description', 'unknown') }} |
+      LTM: loaded |
+      HA sync state: {{ bigip_post_reboot_sync_state }}

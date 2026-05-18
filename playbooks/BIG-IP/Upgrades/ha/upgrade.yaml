@@ -105,15 +105,6 @@
              .get('description', 'unknown') }}
         cacheable: true
 
-    - name: "PREFLIGHT | Abort if pair is not In Sync"
-      ansible.builtin.fail:
-        msg: >-
-          PREFLIGHT FAILED: {{ inventory_hostname }} sync state is '{{ bigip_sync_state }}'.
-          The HA pair must be 'In Sync' before upgrade. Resolve and re-run.
-      when:
-        - bigip_sync_state != 'In Sync'
-        - not bigip_upgrade_dry_run | default(false) | bool
-
     - name: "PREFLIGHT | Query current software version"
       ansible.builtin.uri:
         url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/tm/sys/version"
@@ -127,12 +118,6 @@
       delegate_to: localhost
       # TROUBLESHOOTING: no_log: true
 
-    - name: "PREFLIGHT | Cache snapshot_timestamp and backup_date across all plays"
-      ansible.builtin.set_fact:
-        snapshot_timestamp: "{{ _snapshot_timestamp }}"
-        backup_date: "{{ _backup_date }}"
-        cacheable: true
-
     - name: "PREFLIGHT | Parse version from query response"
       ansible.builtin.set_fact:
         bigip_current_version: >-
@@ -143,6 +128,54 @@
              .get('Version', {})
              .get('description', 'unknown') }}
 
+    # -------------------------------------------------------------------------
+    # Split-brain detection
+    # A split-brain occurs when a previous upgrade run was interrupted mid-way
+    # leaving one node on the new version and one on the old version.
+    # In this state sync will not be 'In Sync' due to version mismatch.
+    # We detect this by checking:
+    #   - Sync is NOT In Sync (expected in split-brain)
+    #   - This node is already on the target version (already upgraded)
+    # If detected: mark node as already_upgraded so downstream plays skip it.
+    # If out of sync for any other reason: abort as normal.
+    # -------------------------------------------------------------------------
+
+    - name: "PREFLIGHT | Detect split-brain - this node already on target version"
+      ansible.builtin.set_fact:
+        bigip_already_upgraded: >-
+          {{ bigip_target_version in bigip_current_version }}
+        cacheable: true
+
+    - name: "PREFLIGHT | Split-brain detected - this node already upgraded"
+      ansible.builtin.debug:
+        msg: >-
+          SPLIT-BRAIN DETECTED: {{ inventory_hostname }} is already running
+          {{ bigip_current_version }} (target: {{ bigip_target_version }}).
+          Sync state is '{{ bigip_sync_state }}' due to version mismatch.
+          This node will be skipped - upgrade will continue on the other node.
+      when:
+        - bigip_sync_state != 'In Sync'
+        - bigip_already_upgraded | bool
+        - not bigip_upgrade_dry_run | default(false) | bool
+
+    - name: "PREFLIGHT | Abort if out of sync for non-split-brain reason"
+      ansible.builtin.fail:
+        msg: >-
+          PREFLIGHT FAILED: {{ inventory_hostname }} sync state is '{{ bigip_sync_state }}'.
+          This is not a split-brain condition (version {{ bigip_current_version }}
+          does not match target {{ bigip_target_version }}).
+          Resolve sync issues manually and re-run.
+      when:
+        - bigip_sync_state != 'In Sync'
+        - not bigip_already_upgraded | bool
+        - not bigip_upgrade_dry_run | default(false) | bool
+
+    - name: "PREFLIGHT | Cache snapshot_timestamp and backup_date across all plays"
+      ansible.builtin.set_fact:
+        snapshot_timestamp: "{{ _snapshot_timestamp }}"
+        backup_date: "{{ _backup_date }}"
+        cacheable: true
+
     - name: "PREFLIGHT | Summary"
       ansible.builtin.debug:
         msg: >-
@@ -151,6 +184,7 @@
           Version: {{ bigip_current_version }} |
           Target: {{ bigip_target_version }} |
           Sync: {{ bigip_sync_state }} |
+          Already upgraded: {{ bigip_already_upgraded | bool }} |
           Timestamp: {{ snapshot_timestamp }}
 
 
@@ -187,6 +221,10 @@
       ansible.builtin.meta: end_host
       when: ha_role | default('unknown') != 'standby'
 
+    - name: "Skip - this host is already on target version"
+      ansible.builtin.meta: end_host
+      when: bigip_already_upgraded | default(false) | bool
+
     - name: "UPGRADE STANDBY | Confirm identity"
       ansible.builtin.debug:
         msg: "Upgrading STANDBY: {{ inventory_hostname }} ({{ ansible_host }})"
@@ -206,6 +244,10 @@
     - name: "Skip - this host is not the standby"
       ansible.builtin.meta: end_host
       when: ha_role | default('unknown') != 'standby'
+
+    - name: "Skip - standby already on target version, no verification needed"
+      ansible.builtin.meta: end_host
+      when: bigip_already_upgraded | default(false) | bool
   roles:
     - role: snapshot_post
     - role: snapshot_report
@@ -285,6 +327,10 @@
     - name: "Skip - this host is not the original active"
       ansible.builtin.meta: end_host
       when: ha_role | default('unknown') != 'active'
+
+    - name: "Skip - this host is already on target version"
+      ansible.builtin.meta: end_host
+      when: bigip_already_upgraded | default(false) | bool
 
     - name: "UPGRADE ACTIVE | Confirm identity"
       ansible.builtin.debug:

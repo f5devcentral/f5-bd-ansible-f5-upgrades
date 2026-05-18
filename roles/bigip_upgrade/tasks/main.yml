@@ -90,8 +90,31 @@
     image: "{{ bigip_image_filename }}"
     state: activated
     volume: "{{ bigip_install_volume }}"
-  ignore_errors: true
   register: bigip_activate_result
+  # Only ignore connection drop errors - these are expected when BIG-IP reboots.
+  # Real failures (400, 401, 500 etc) will still halt the play.
+  failed_when:
+    - bigip_activate_result is failed
+    - >-
+      'Connection' not in (bigip_activate_result.msg | default(''))
+      and 'connection' not in (bigip_activate_result.msg | default(''))
+      and 'reset' not in (bigip_activate_result.msg | default(''))
+      and 'closed' not in (bigip_activate_result.msg | default(''))
+      and 'timed out' not in (bigip_activate_result.msg | default(''))
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+
+- name: "UPGRADE | Set reboot_triggered fact"
+  ansible.builtin.set_fact:
+    bigip_reboot_triggered: >-
+      {{ bigip_activate_result is not failed or
+         'Connection' in (bigip_activate_result.msg | default('')) or
+         'connection' in (bigip_activate_result.msg | default('')) or
+         'reset' in (bigip_activate_result.msg | default('')) or
+         'closed' in (bigip_activate_result.msg | default('')) or
+         'timed out' in (bigip_activate_result.msg | default('')) }}
+    cacheable: true
   when:
     - not bigip_upgrade_dry_run | bool
     - bigip_reboot_after_install | bool
@@ -105,3 +128,4 @@
   when:
     - not bigip_upgrade_dry_run | bool
     - bigip_reboot_after_install | bool
+    - bigip_reboot_triggered | default(false) | bool
