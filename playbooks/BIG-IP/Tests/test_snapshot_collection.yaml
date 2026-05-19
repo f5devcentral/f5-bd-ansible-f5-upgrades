@@ -144,8 +144,8 @@
     - name: "TEST | Routes and ARP result"
       ansible.builtin.debug:
         msg: |
-          Route entries: {{ test_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
-          ARP entries: {{ test_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
+          Route lines: {{ test_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
+          ARP lines: {{ test_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
 
     - name: "TEST | HA failover state via uri"
       ansible.builtin.uri:
@@ -163,7 +163,9 @@
 
     - name: "TEST | HA failover state result"
       ansible.builtin.debug:
-        msg: "Failover state: {{ 'active' if test_failover.json.get('apiRawValues', {}).get('apiAnonymous', '') | lower is search('active') else 'standby' }}"
+        msg: |
+          Failover state: {{ 'active' if test_failover.json.get('apiRawValues', {})
+            .get('apiAnonymous', '') | lower is search('active') else 'standby' }}
 
     - name: "TEST | Write test snapshot JSON"
       ansible.builtin.copy:
@@ -184,8 +186,10 @@
           virtual_servers: "{{ test_all_vs }}"
           ltm_pools: "{{ test_all_pools }}"
           as3_declaration: "{{ test_as3_info.ansible_facts.ansible_net_as3_config | default({}) }}"
-          routes: "{{ test_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
-          arp: "{{ test_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
+          routes: >-
+            {{ test_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}
+          arp: >-
+            {{ test_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}
       delegate_to: localhost
 
     - name: "TEST | Final Summary"
@@ -202,7 +206,7 @@
           Virtual Servers : {{ test_all_vs | length }}
           LTM Pools       : {{ test_all_pools | length }}
           AS3 present     : {{ test_as3_has_config | default(false) }}
-          Route entries   : {{ test_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
-          ARP entries     : {{ test_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
+          Route lines     : {{ test_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
+          ARP lines       : {{ test_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
           Output file     : {{ test_output_dir }}/{{ inventory_hostname }}_{{ test_timestamp }}_test_snapshot.json
           ============================================================
