@@ -10,9 +10,6 @@
 #   5. HA failover state via uri
 #   6. Sync state via bigip_device_info
 #
-# Run against a single host to validate all collection is working correctly
-# before running the full upgrade playbook.
-#
 # Usage:
 #   ansible-playbook playbooks/BIG-IP/Tests/test_snapshot_collection.yaml \
 #     -i inventory/hosts.ini \
@@ -36,10 +33,6 @@
         mode: '0755'
       delegate_to: localhost
 
-    # -------------------------------------------------------------------------
-    # Pass 1 - Partitions + system info + sync status
-    # -------------------------------------------------------------------------
-
     - name: "TEST | Pass 1 - partitions, system-info, sync-status"
       f5networks.f5_bigip.bigip_device_info:
         gather_subset:
@@ -50,7 +43,7 @@
 
     - name: "TEST | Pass 1 result"
       ansible.builtin.debug:
-        msg: >-
+        msg: |
           Partitions: {{ test_base_info.partitions | map(attribute='name') | list }}
           Version: {{ test_base_info.system_info.product_version | default('unknown') }}
           Sync status count: {{ test_base_info.sync_status | default([]) | length }}
@@ -58,10 +51,6 @@
     - name: "TEST | Set partition list"
       ansible.builtin.set_fact:
         test_partition_names: "{{ test_base_info.partitions | map(attribute='name') | list }}"
-
-    # -------------------------------------------------------------------------
-    # Pass 2 - VS and pools per partition
-    # -------------------------------------------------------------------------
 
     - name: "TEST | Pass 2 - VS and pools per partition"
       f5networks.f5_bigip.bigip_device_info:
@@ -74,11 +63,7 @@
 
     - name: "TEST | Pass 2 result per partition"
       ansible.builtin.debug:
-        msg: >-
-          Partition={{ item.item }}
-          VS count={{ item.virtual_servers | default([]) | length }}
-          Pool count={{ item.ltm_pools | default([]) | length }}
-          VS names={{ item.virtual_servers | default([]) | map(attribute='full_path') | list }}
+        msg: "Partition={{ item.item }} VS count={{ item.virtual_servers | default([]) | length }} Pool count={{ item.ltm_pools | default([]) | length }} VS names={{ item.virtual_servers | default([]) | map(attribute='full_path') | list }}"
       loop: "{{ test_per_partition.results }}"
 
     - name: "TEST | Merge VS results"
@@ -99,7 +84,7 @@
 
     - name: "TEST | Merged collection summary"
       ansible.builtin.debug:
-        msg: >-
+        msg: |
           ============================================================
           MERGED COLLECTION RESULTS
           ------------------------------------------------------------
@@ -114,10 +99,6 @@
             - {{ pool.full_path }} ({{ pool.availability_status | default('unknown') }})
           {% endfor %}
           ============================================================
-
-    # -------------------------------------------------------------------------
-    # AS3 declarations - Common partition
-    # -------------------------------------------------------------------------
 
     - name: "TEST | AS3 declarations from Common partition"
       f5networks.f5_bigip.bigip_device_info:
@@ -137,14 +118,10 @@
       ansible.builtin.debug:
         msg: "AS3 collection: failed={{ test_as3_failed | default(true) }} | has_config={{ test_as3_has_config | default(false) }}"
 
-    # -------------------------------------------------------------------------
-    # Routes and ARP via bigip_command
-    # -------------------------------------------------------------------------
-
     - name: "TEST | Routes via tmsh"
       f5networks.f5_bigip.bigip_command:
         commands:
-          - "tmsh show /net route all-properties"
+          - "tmsh show /net route"
       register: test_routes
 
     - name: "TEST | ARP via tmsh"
@@ -155,13 +132,7 @@
 
     - name: "TEST | Routes and ARP result"
       ansible.builtin.debug:
-        msg: >-
-          Route lines: {{ test_routes.stdout_lines | default([]) | length }}
-          ARP lines: {{ test_arp.stdout_lines | default([]) | length }}
-
-    # -------------------------------------------------------------------------
-    # HA failover state via uri
-    # -------------------------------------------------------------------------
+        msg: "Route lines: {{ test_routes.stdout_lines | default([]) | length }} | ARP lines: {{ test_arp.stdout_lines | default([]) | length }}"
 
     - name: "TEST | HA failover state via uri"
       ansible.builtin.uri:
@@ -179,13 +150,7 @@
 
     - name: "TEST | HA failover state result"
       ansible.builtin.debug:
-        msg: >-
-          Failover state: {{ 'active' if test_failover.json.get('apiRawValues', {})
-            .get('apiAnonymous', '') | lower is search('active') else 'standby' }}
-
-    # -------------------------------------------------------------------------
-    # Write test snapshot JSON
-    # -------------------------------------------------------------------------
+        msg: "Failover state: {{ 'active' if test_failover.json.get('apiRawValues', {}).get('apiAnonymous', '') | lower is search('active') else 'standby' }}"
 
     - name: "TEST | Write test snapshot JSON"
       ansible.builtin.copy:
@@ -206,13 +171,9 @@
           arp: "{{ test_arp.stdout_lines | default([]) }}"
       delegate_to: localhost
 
-    # -------------------------------------------------------------------------
-    # Final summary
-    # -------------------------------------------------------------------------
-
     - name: "TEST | Final Summary"
       ansible.builtin.debug:
-        msg: >-
+        msg: |
           ============================================================
           SNAPSHOT COLLECTION TEST - {{ inventory_hostname }}
           ------------------------------------------------------------
