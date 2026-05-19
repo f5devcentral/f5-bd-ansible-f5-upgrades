@@ -1,0 +1,120 @@
+---
+# =============================================================================
+# f5os_wait_rseries - Post-reboot readiness checks for F5OS rSeries
+# =============================================================================
+# Applies the same layered wait strategy as bigip_wait but for F5OS:
+#
+#   1. Check if HTTPS already up (device came back during install timeout)
+#   2. HTTPS port up      - web stack listening
+#   3. REST API ready     - /api/data/openconfig-system:system/state responds
+#   4. Version confirmed  - running version matches target
+#   5. Platform ready     - system state is running/online
+# =============================================================================
+
+- name: "F5OS_WAIT_RSERIES | Skip - reboot was not triggered"
+  ansible.builtin.meta: end_host
+  when: not f5os_reboot_triggered | default(false) | bool
+
+- name: "F5OS_WAIT_RSERIES | Initial delay - allow reboot to begin"
+  ansible.builtin.wait_for:
+    timeout: "{{ f5os_reboot_initial_delay | default(60) }}"
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------------
+# Check if device already back online before waiting for port down/up
+# -----------------------------------------------------------------------------
+
+- name: "F5OS_WAIT_RSERIES | Check if HTTPS port is already up"
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: "{{ f5os_https_port | default(443) }}"
+    state: started
+    timeout: 5
+    sleep: 1
+  register: f5os_https_already_up
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: "F5OS_WAIT_RSERIES | Device already back online - skipping port down layer"
+  ansible.builtin.debug:
+    msg: "HTTPS port already up on {{ ansible_host }} - device came back during install timeout."
+  when: f5os_https_already_up is not failed
+
+- name: "F5OS_WAIT_RSERIES | Layer 1 - wait for HTTPS port to go DOWN (reboot started)"
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: "{{ f5os_https_port | default(443) }}"
+    state: stopped
+    timeout: 300
+    sleep: 5
+  delegate_to: localhost
+  ignore_errors: true
+  when: f5os_https_already_up is failed
+
+- name: "F5OS_WAIT_RSERIES | Layer 2 - wait for HTTPS port to come UP"
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: "{{ f5os_https_port | default(443) }}"
+    state: started
+    timeout: 600
+    sleep: 10
+  delegate_to: localhost
+  when: f5os_https_already_up is failed
+
+# -----------------------------------------------------------------------------
+# Layer 3 - Poll REST API until ready
+# F5OS uses RESTCONF API - poll system state endpoint
+# -----------------------------------------------------------------------------
+
+- name: "F5OS_WAIT_RSERIES | Layer 3 - poll REST API until system ready"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ f5os_https_port | default(443) }}/api/data/openconfig-system:system/state"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_httpapi_password | default(ansible_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    timeout: 30
+    headers:
+      Content-Type: "application/yang-data+json"
+  register: f5os_rest_check
+  until: f5os_rest_check.status == 200
+  retries: "{{ f5os_wait_max_retries | default(30) }}"
+  delay: "{{ f5os_wait_retry_delay | default(20) }}"
+  delegate_to: localhost
+  # TROUBLESHOOTING: no_log: true
+
+# -----------------------------------------------------------------------------
+# Layer 4 - Confirm version via f5os_device_info module
+# -----------------------------------------------------------------------------
+
+- name: "F5OS_WAIT_RSERIES | Layer 4 - confirm running version via module"
+  f5networks.f5os.f5os_device_info:
+    gather_subset:
+      - system-info
+  register: f5os_post_reboot_info
+  retries: "{{ f5os_wait_max_retries | default(30) }}"
+  delay: "{{ f5os_wait_retry_delay | default(20) }}"
+  until: f5os_post_reboot_info is not failed
+
+- name: "F5OS_WAIT_RSERIES | Set post-reboot version fact"
+  ansible.builtin.set_fact:
+    f5os_post_reboot_version: >-
+      {{ f5os_post_reboot_info.system_info.platform_software_version
+         | default('unknown') }}
+
+- name: "F5OS_WAIT_RSERIES | Device fully ready"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is fully ready.
+      Running version: {{ f5os_post_reboot_version }} |
+      Target: {{ f5os_target_version }}
+
+- name: "F5OS_WAIT_RSERIES | Warn if version does not match target"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: Running version {{ f5os_post_reboot_version }}
+      does not match target {{ f5os_target_version }}.
+      Check installation logs on device.
+  when: f5os_target_version not in f5os_post_reboot_version

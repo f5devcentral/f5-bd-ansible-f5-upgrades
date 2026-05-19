@@ -2,42 +2,260 @@
 # =============================================================================
 # F5OS rSeries Upgrade Playbook
 # =============================================================================
-# Usage:
-#   ansible-playbook playbooks/F5OS/Upgrades/rSeries/upgrade.yaml \
-#     -i inventory/hosts.ini \
-#     -e "f5os_image_filename=F5OS-A-1.8.0-13798.R4R5.iso" \
-#     --limit rseries-r2600-01
+# Upgrade flow:
+#   0. Pre-flight    - validate extra_vars, check version, set timestamps
+#   1. Pre-snapshot  - collect baseline system state
+#   2. Upgrade       - import image from URL, install, wait for device to return
+#   3. Post-snapshot - collect post-upgrade state and report
+#   4. Store artifacts on bastion
+#
+# IMPORTANT - Image delivery:
+#   rSeries PULLS the image from a remote HTTP/HTTPS/SCP URL.
+#   Unlike BIG-IP, there is no bastion SCP push.
+#   The image server must be reachable from the rSeries management interface.
+#   The bastion can serve this role if it has HTTP/SCP configured.
+#
+# AAP 2.6 Setup:
+#   Project    : f5-bd-ansible-f5-upgrades
+#   Playbook   : playbooks/F5OS/Upgrades/rSeries/upgrade.yaml
+#   Inventory  : [f5os_rseries] group
+#   Credential : AAP Machine Credential for rSeries devices
+#   Extra Vars : paste contents of extra_vars/upgrade_vars.yml and update values
 # =============================================================================
 
-- name: "F5OS rSeries Upgrade - Pre-Snapshot"
+
+# =============================================================================
+# PLAY 0 - Pre-flight
+# =============================================================================
+- name: "F5OS rSeries Upgrade - Play 0: Pre-flight Checks"
   hosts: "{{ target_hosts | default('f5os_rseries') }}"
   gather_facts: false
-  vars_files:
-    - vars/upgrade_vars.yml
   vars:
-    snapshot_phase: pre
-    snapshot_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
-  roles:
-    - role: snapshot_pre
+    _snapshot_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    _backup_date: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+  tasks:
+
+    - name: "PREFLIGHT | Validate required extra vars are set"
+      ansible.builtin.fail:
+        msg: "Missing required extra var: '{{ item }}' - set it in AAP Extra Variables."
+      when: vars[item] is not defined or vars[item] | string | length == 0
+      loop:
+        - f5os_target_version
+        - f5os_image_version
+        - f5os_image_url
+      delegate_to: localhost
+
+    - name: "PREFLIGHT | Check current running version"
+      f5networks.f5os.f5os_device_info:
+        gather_subset:
+          - system-info
+      register: preflight_info
+
+    - name: "PREFLIGHT | Set current version fact"
+      ansible.builtin.set_fact:
+        f5os_current_version: >-
+          {{ preflight_info.system_info.platform_software_version
+             | default('unknown') }}
+
+    - name: "PREFLIGHT | Already on target version - nothing to do"
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} is already running {{ f5os_current_version }} - skipping."
+      when: f5os_target_version in f5os_current_version
+
+    - name: "PREFLIGHT | Skip if already on target version"
+      ansible.builtin.meta: end_host
+      when: f5os_target_version in f5os_current_version
+
+    - name: "PREFLIGHT | Cache timestamps across all plays"
+      ansible.builtin.set_fact:
+        snapshot_timestamp: "{{ _snapshot_timestamp }}"
+        backup_date: "{{ _backup_date }}"
+        cacheable: true
+
+    - name: "PREFLIGHT | Summary"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} ({{ ansible_host }}) |
+          Current: {{ f5os_current_version }} |
+          Target: {{ f5os_target_version }} |
+          Image URL: {{ f5os_image_url }} |
+          Timestamp: {{ snapshot_timestamp }}
+
+
+# =============================================================================
+# PLAY 1 - Pre-snapshot
+# =============================================================================
+- name: "F5OS rSeries Upgrade - Play 1: Pre-Snapshot"
+  hosts: "{{ target_hosts | default('f5os_rseries') }}"
+  gather_facts: false
+  tasks:
+
+    - name: "SNAPSHOT_PRE | Ensure snapshot output directory exists on EE"
+      ansible.builtin.file:
+        path: "{{ snapshot_output_dir | default('/runner/artifacts/snapshots') }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+
+    - name: "SNAPSHOT_PRE | Collect system info"
+      f5networks.f5os.f5os_device_info:
+        gather_subset:
+          - system-info
+      register: f5os_pre_info
+
+    - name: "SNAPSHOT_PRE | Write pre-snapshot JSON"
+      ansible.builtin.copy:
+        dest: "{{ snapshot_output_dir | default('/runner/artifacts/snapshots') }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre.json"
+        content: "{{ pre_data | to_nice_json }}"
+        mode: '0644'
+      vars:
+        pre_data:
+          metadata:
+            hostname: "{{ inventory_hostname }}"
+            management_ip: "{{ ansible_host }}"
+            phase: pre
+            timestamp: "{{ snapshot_timestamp }}"
+            platform: rseries
+            version: "{{ f5os_pre_info.system_info.platform_software_version | default('unknown') }}"
+          system_info: "{{ f5os_pre_info.system_info | default({}) }}"
+      delegate_to: localhost
+
+    - name: "SNAPSHOT_PRE | Summary"
+      ansible.builtin.debug:
+        msg: >-
+          Pre-snapshot complete for {{ inventory_hostname }} |
+          Version: {{ f5os_pre_info.system_info.platform_software_version | default('unknown') }}
   tags: [snapshot, pre_snapshot]
 
-- name: "F5OS rSeries Upgrade - Software Install"
+
+# =============================================================================
+# PLAY 2 - Upgrade
+# =============================================================================
+- name: "F5OS rSeries Upgrade - Play 2: Upgrade Device"
   hosts: "{{ target_hosts | default('f5os_rseries') }}"
   gather_facts: false
-  vars_files:
-    - vars/upgrade_vars.yml
+  pre_tasks:
+    - name: "UPGRADE | Confirm upgrade target"
+      ansible.builtin.debug:
+        msg: >-
+          Upgrading rSeries: {{ inventory_hostname }} ({{ ansible_host }})
+          Image URL: {{ f5os_image_url }}
+          Version: {{ f5os_image_version }}
   roles:
-    - role: f5os_upgrade/rseries
+    - role: f5os_upgrade_rseries
+    - role: f5os_wait_rseries
   tags: [upgrade]
 
-- name: "F5OS rSeries Upgrade - Post-Snapshot & Diff"
+
+# =============================================================================
+# PLAY 3 - Post-snapshot + report
+# =============================================================================
+- name: "F5OS rSeries Upgrade - Play 3: Post-Snapshot & Report"
   hosts: "{{ target_hosts | default('f5os_rseries') }}"
   gather_facts: false
-  vars_files:
-    - vars/upgrade_vars.yml
-  vars:
-    snapshot_phase: post
-  roles:
-    - role: snapshot_post
-    - role: snapshot_report
+  tasks:
+
+    - name: "SNAPSHOT_POST | Collect post-upgrade system info"
+      f5networks.f5os.f5os_device_info:
+        gather_subset:
+          - system-info
+      register: f5os_post_info
+
+    - name: "SNAPSHOT_POST | Load pre-snapshot data"
+      ansible.builtin.set_fact:
+        f5os_pre_loaded: "{{ lookup('file', (snapshot_output_dir | default('/runner/artifacts/snapshots')) + '/' + inventory_hostname + '_' + snapshot_timestamp + '_pre.json') | from_json }}"
+      delegate_to: localhost
+
+    - name: "SNAPSHOT_POST | Write post-snapshot JSON"
+      ansible.builtin.copy:
+        dest: "{{ snapshot_output_dir | default('/runner/artifacts/snapshots') }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_post.json"
+        content: "{{ post_data | to_nice_json }}"
+        mode: '0644'
+      vars:
+        post_data:
+          metadata:
+            hostname: "{{ inventory_hostname }}"
+            management_ip: "{{ ansible_host }}"
+            phase: post
+            timestamp: "{{ snapshot_timestamp }}"
+            platform: rseries
+            version: "{{ f5os_post_info.system_info.platform_software_version | default('unknown') }}"
+          system_info: "{{ f5os_post_info.system_info | default({}) }}"
+      delegate_to: localhost
+
+    - name: "SNAPSHOT_POST | Version diff report"
+      ansible.builtin.debug:
+        msg: >-
+          ============================================================
+          F5OS rSeries UPGRADE REPORT - {{ inventory_hostname }}
+          ------------------------------------------------------------
+          Before : {{ f5os_pre_loaded.metadata.version | default('unknown') }}
+          After  : {{ f5os_post_info.system_info.platform_software_version | default('unknown') }}
+          Result : {{ 'UPGRADED' if f5os_pre_loaded.metadata.version != f5os_post_info.system_info.platform_software_version | default('') else 'NO CHANGE' }}
+          ============================================================
+
+    - name: "SNAPSHOT_POST | Fail if version did not change to target"
+      ansible.builtin.fail:
+        msg: >-
+          UPGRADE VALIDATION FAILED: {{ inventory_hostname }} is still running
+          {{ f5os_post_info.system_info.platform_software_version | default('unknown') }}.
+          Expected {{ f5os_target_version }}.
+      when:
+        - f5os_target_version not in (f5os_post_info.system_info.platform_software_version | default(''))
   tags: [snapshot, post_snapshot, report]
+
+
+# =============================================================================
+# PLAY 4 - Store artifacts on bastion
+# =============================================================================
+- name: "F5OS rSeries Upgrade - Play 4: Store Artifacts on Bastion"
+  hosts: "{{ target_hosts | default('f5os_rseries') }}"
+  gather_facts: false
+  tasks:
+
+    - name: "BASTION_STORAGE | Set bastion backup path"
+      ansible.builtin.set_fact:
+        f5os_bastion_backup_path: "{{ bastion_backup_root }}/{{ inventory_hostname }}/{{ backup_date }}"
+
+    - name: "BASTION_STORAGE | Create directory on bastion"
+      ansible.builtin.file:
+        path: "{{ f5os_bastion_backup_path }}"
+        state: directory
+        mode: '0755'
+      delegate_to: bastion
+      vars:
+        ansible_connection: ssh
+      become: true
+
+    - name: "BASTION_STORAGE | Copy pre-snapshot JSON to bastion"
+      ansible.builtin.copy:
+        src: "{{ snapshot_output_dir | default('/runner/artifacts/snapshots') }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_pre.json"
+        dest: "{{ f5os_bastion_backup_path }}/"
+        mode: '0644'
+      delegate_to: bastion
+      vars:
+        ansible_connection: ssh
+      become: true
+
+    - name: "BASTION_STORAGE | Copy post-snapshot JSON to bastion"
+      ansible.builtin.copy:
+        src: "{{ snapshot_output_dir | default('/runner/artifacts/snapshots') }}/{{ inventory_hostname }}_{{ snapshot_timestamp }}_post.json"
+        dest: "{{ f5os_bastion_backup_path }}/"
+        mode: '0644'
+      delegate_to: bastion
+      vars:
+        ansible_connection: ssh
+      become: true
+
+    - name: "BASTION_STORAGE | List stored files"
+      ansible.builtin.shell: "ls -lh {{ f5os_bastion_backup_path }}/"
+      register: bastion_files
+      delegate_to: bastion
+      vars:
+        ansible_connection: ssh
+      changed_when: false
+
+    - name: "BASTION_STORAGE | Confirm files stored"
+      ansible.builtin.debug:
+        msg: "Files stored at bastion:{{ f5os_bastion_backup_path }}\n{{ bastion_files.stdout }}"
+  tags: [storage]

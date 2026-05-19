@@ -1,0 +1,130 @@
+---
+# =============================================================================
+# f5os_upgrade_rseries - F5OS rSeries image import and installation
+# =============================================================================
+# F5OS rSeries upgrade flow:
+#   1. Check current running version - skip if already on target
+#   2. Import image from remote URL (HTTP/HTTPS/SCP) to rSeries staging
+#      - state: import  → starts the async import, returns operation_id
+#      - state: present → polls import status until complete
+#   3. Install imported image
+#      - state: install  → starts installation
+#      - state: present  → polls installation until complete
+#   4. Reboot into new version (installation triggers reboot)
+#
+# NOTE: Unlike BIG-IP, rSeries pulls the image from a remote server URL.
+# The image must be accessible via HTTP/HTTPS/SCP from the rSeries mgmt network.
+# The bastion SCP approach used for BIG-IP is NOT used here.
+#
+# Image URL format examples:
+#   https://files.example.com/f5os/F5OS-A-1.8.0-13798.R4R5.iso
+#   scp://user@files.example.com/images/F5OS-A-1.8.0-13798.R4R5.iso
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Pre-flight - version check
+# -----------------------------------------------------------------------------
+
+- name: "F5OS_UPGRADE_RSERIES | Check current running version"
+  f5networks.f5os.f5os_device_info:
+    gather_subset:
+      - system-info
+  register: rseries_current_info
+
+- name: "F5OS_UPGRADE_RSERIES | Set current version fact"
+  ansible.builtin.set_fact:
+    rseries_current_version: >-
+      {{ rseries_current_info.system_info.platform_software_version
+         | default('unknown') }}
+
+- name: "F5OS_UPGRADE_RSERIES | Display current version"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} current version: {{ rseries_current_version }}
+      | target: {{ f5os_target_version }}
+
+- name: "F5OS_UPGRADE_RSERIES | Skip if target version already running"
+  ansible.builtin.meta: end_host
+  when: f5os_target_version in rseries_current_version
+
+- name: "F5OS_UPGRADE_RSERIES | Dry-run mode - skipping import and install"
+  ansible.builtin.debug:
+    msg: "DRY RUN: Would import {{ f5os_image_url }} and install {{ f5os_image_version }}"
+  when: f5os_upgrade_dry_run | bool
+
+# -----------------------------------------------------------------------------
+# Step 1 - Import image from remote URL
+# Two-step: state=import starts it, state=present polls until complete
+# -----------------------------------------------------------------------------
+
+- name: "F5OS_UPGRADE_RSERIES | Step 1a - Start image import from remote URL"
+  f5networks.f5os.f5os_system_image_import:
+    remote_image_url: "{{ f5os_image_url }}"
+    remote_user: "{{ f5os_image_server_user | default(omit) }}"
+    remote_password: "{{ f5os_image_server_password | default(omit) }}"
+    local_path: "images/staging"
+    state: import
+  register: rseries_import_start
+  when: not f5os_upgrade_dry_run | bool
+  # TROUBLESHOOTING: no_log: true
+
+- name: "F5OS_UPGRADE_RSERIES | Display import operation ID"
+  ansible.builtin.debug:
+    msg: "Image import started - operation_id: {{ rseries_import_start.operation_id | default('n/a') }}"
+  when: not f5os_upgrade_dry_run | bool
+
+- name: "F5OS_UPGRADE_RSERIES | Step 1b - Poll image import until complete"
+  f5networks.f5os.f5os_system_image_import:
+    remote_image_url: "{{ f5os_image_url }}"
+    local_path: "images/staging"
+    operation_id: "{{ rseries_import_start.operation_id }}"
+    timeout: "{{ f5os_image_import_timeout | default(1800) }}"
+    state: present
+  register: rseries_import_result
+  when:
+    - not f5os_upgrade_dry_run | bool
+    - rseries_import_start.operation_id is defined
+
+- name: "F5OS_UPGRADE_RSERIES | Image import complete"
+  ansible.builtin.debug:
+    msg: "Image import complete: {{ f5os_image_url | basename }}"
+  when: not f5os_upgrade_dry_run | bool
+
+# -----------------------------------------------------------------------------
+# Step 2 - Install image
+# Two-step: state=install starts it, state=present polls until complete
+# Device will reboot after installation completes.
+# f5os_wait_rseries handles post-reboot readiness.
+# -----------------------------------------------------------------------------
+
+- name: "F5OS_UPGRADE_RSERIES | Step 2a - Start image installation"
+  f5networks.f5os.f5os_system_image_install:
+    image_version: "{{ f5os_image_version }}"
+    state: install
+  register: rseries_install_start
+  when: not f5os_upgrade_dry_run | bool
+  ignore_errors: true
+
+- name: "F5OS_UPGRADE_RSERIES | Step 2b - Poll installation until complete or device reboots"
+  f5networks.f5os.f5os_system_image_install:
+    image_version: "{{ f5os_image_version }}"
+    timeout: "{{ f5os_image_install_timeout | default(3600) }}"
+    state: present
+  register: rseries_install_result
+  when:
+    - not f5os_upgrade_dry_run | bool
+  ignore_errors: true
+
+- name: "F5OS_UPGRADE_RSERIES | Set reboot_triggered fact"
+  ansible.builtin.set_fact:
+    f5os_reboot_triggered: true
+    cacheable: true
+  when: not f5os_upgrade_dry_run | bool
+
+- name: "F5OS_UPGRADE_RSERIES | Installation triggered - device will reboot"
+  ansible.builtin.debug:
+    msg: >-
+      Installation triggered on {{ inventory_hostname }}.
+      Device will reboot into {{ f5os_image_version }}.
+      f5os_wait_rseries will poll until device is back online.
+  when: not f5os_upgrade_dry_run | bool

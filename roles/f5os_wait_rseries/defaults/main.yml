@@ -1,0 +1,5 @@
+---
+f5os_https_port: 443
+f5os_reboot_initial_delay: 60
+f5os_wait_retry_delay: 20
+f5os_wait_max_retries: 30

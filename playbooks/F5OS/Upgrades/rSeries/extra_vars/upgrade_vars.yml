@@ -1,0 +1,74 @@
+---
+# =============================================================================
+# F5OS rSeries Upgrade - AAP Extra Variables
+# =============================================================================
+# AAP 2.6: Job Template > Extra Variables > paste this content, update values.
+#
+# IMPORTANT - Image delivery:
+#   rSeries PULLS the image from a remote URL (HTTP/HTTPS/SCP).
+#   The image server must be reachable from the rSeries management interface.
+#   This is different from BIG-IP which uses bastion SCP push.
+#
+# WARNING: Do NOT include ansible_connection, ansible_network_os, or
+#   ansible_httpapi_* in AAP Extra Variables.
+# =============================================================================
+
+# =============================================================================
+# REQUIRED
+# =============================================================================
+
+# Target F5OS version string for pre/post verification
+# Format: major.minor.patch  e.g. "1.8.0"
+f5os_target_version: "1.8.0"
+
+# Version string as F5OS expects it for installation
+# Format: major.minor.patch-build  e.g. "1.8.0-13798"
+f5os_image_version: "1.8.0-13798"
+
+# Full URL to the F5OS image - must be reachable from rSeries mgmt interface
+# Supported: HTTP, HTTPS, SCP
+# Example HTTP:  http://192.170.7.50/f5os/F5OS-A-1.8.0-13798.R4R5.iso
+# Example HTTPS: https://files.example.com/f5os/F5OS-A-1.8.0-13798.R4R5.iso
+# Example SCP:   scp://user@192.170.7.50/images/F5OS-A-1.8.0-13798.R4R5.iso
+f5os_image_url: "http://192.170.7.50/f5os/F5OS-A-1.8.0-13798.R4R5.iso"
+
+# Bastion backup root for storing snapshot artifacts
+bastion_backup_root: "/mnt/software/F5-Backups/f5os-backups"
+
+# =============================================================================
+# OPTIONAL - Image server credentials (if server requires auth)
+# =============================================================================
+# f5os_image_server_user: ""
+# f5os_image_server_password: ""
+
+# =============================================================================
+# TIMEOUTS
+# =============================================================================
+
+# Seconds to wait for image import to complete (150-3600, default 1800)
+f5os_image_import_timeout: 1800
+
+# Seconds to wait for image installation to complete (150-3600, default 3600)
+f5os_image_install_timeout: 3600
+
+# httpapi persistent connection command timeout
+ansible_command_timeout: 600
+
+# =============================================================================
+# REBOOT WAIT
+# =============================================================================
+f5os_reboot_initial_delay: 60
+f5os_wait_retry_delay: 20
+f5os_wait_max_retries: 30
+f5os_https_port: 443
+
+# =============================================================================
+# SNAPSHOT
+# =============================================================================
+snapshot_output_dir: "/runner/artifacts/snapshots"
+
+# =============================================================================
+# DRY RUN
+# =============================================================================
+# Set true to skip image import and installation (pre-flight + snapshot only)
+f5os_upgrade_dry_run: false

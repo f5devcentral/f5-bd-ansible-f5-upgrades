@@ -1,0 +1,24 @@
+---
+# Remote URL to the F5OS image - must be reachable from rSeries mgmt network
+# Examples:
+#   https://files.example.com/f5os/F5OS-A-1.8.0-13798.R4R5.iso
+#   scp://user@files.example.com/images/F5OS-A-1.8.0-13798.R4R5.iso
+f5os_image_url: ""
+
+# Version string to install - must match what F5OS expects
+# Format: <major>.<minor>.<patch>-<build>  e.g. "1.8.0-13798"
+f5os_image_version: ""
+
+# Target version string for pre-flight check
+f5os_target_version: ""
+
+# Optional credentials if image server requires auth
+# f5os_image_server_user: ""
+# f5os_image_server_password: ""
+
+# Timeouts
+f5os_image_import_timeout: 1800
+f5os_image_install_timeout: 3600
+
+# Skip install and reboot (import only)
+f5os_upgrade_dry_run: false

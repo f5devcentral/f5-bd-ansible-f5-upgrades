@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  role_name: f5os_upgrade_rseries
+  description: >
+    Import and install F5OS system image on rSeries appliances.
+    Uses f5os_system_image_import (pull from URL) and f5os_system_image_install.
+  min_ansible_version: "2.15"
+collections:
+  - f5networks.f5os
+dependencies: []

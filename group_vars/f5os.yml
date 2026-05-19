@@ -1,45 +1,35 @@
 ---
+# =============================================================================
 # group_vars/f5os.yml
-# Variables shared across all F5OS devices (rSeries and Velos).
-# Sensitive values should be stored in Ansible Vault.
+# =============================================================================
+# Variables for all F5OS devices (rSeries and Velos).
+# Applied via AAP inventory group vars.
+#
+# CREDENTIALS: ansible_user and ansible_httpapi_password come from the
+# AAP Machine Credential - never store them here.
+# =============================================================================
 
 # -----------------------------------------------------------------------------
-# Connection
+# Connection - httpapi over RESTCONF
+# F5OS uses port 443 for rSeries, 8888 for Velos controller
+# Override per-group in AAP inventory if needed
 # -----------------------------------------------------------------------------
 ansible_connection: httpapi
 ansible_network_os: f5networks.f5os.f5os
 ansible_httpapi_port: 443
 ansible_httpapi_use_ssl: true
 ansible_httpapi_validate_certs: false
-
-# -----------------------------------------------------------------------------
-# Upgrade settings
-# -----------------------------------------------------------------------------
-# Path on Ansible controller where F5OS upgrade ISOs are staged
-f5os_image_local_path: "/mnt/software/f5os"
-
-# Whether to set the staged image as the next boot image after import
-f5os_set_next_boot: true
-
-# Whether to reboot after staging (set false to stage only and reboot manually)
-f5os_reboot_after_stage: true
+ansible_command_timeout: 600
 
 # -----------------------------------------------------------------------------
 # Wait / reboot timing
 # -----------------------------------------------------------------------------
-# Seconds to wait after triggering reboot before probing
-f5os_reboot_initial_delay: 90
-
-# Seconds between REST readiness probe retries
-f5os_wait_retry_delay: 30
-
-# Maximum number of REST readiness probe attempts (~40 * 30s = 20 min)
-f5os_wait_max_retries: 40
+f5os_reboot_initial_delay: 60
+f5os_wait_retry_delay: 20
+f5os_wait_max_retries: 30
+f5os_https_port: 443
 
 # -----------------------------------------------------------------------------
 # Snapshot settings
 # -----------------------------------------------------------------------------
-snapshot_output_dir: "{{ playbook_dir }}/../../../snapshots"
-
-# Whether to capture tenant status as part of pre/post snapshot
-f5os_snapshot_tenants: true
+snapshot_output_dir: "/runner/artifacts/snapshots"
