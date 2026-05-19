@@ -285,7 +285,8 @@
   ansible.builtin.set_fact:
     diff_routes:
       pre_line_count: "{{ snapshot_pre_loaded.routes | default([]) | length }}"
-      post_line_count: "{{ snap_post_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}"
+      post_line_count: >- 
+        {{ snap_post_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
       changed: "{{ snapshot_pre_loaded.routes | default([]) | length != snap_post_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}"
 
 - name: "SNAPSHOT_POST | Compute version change"
