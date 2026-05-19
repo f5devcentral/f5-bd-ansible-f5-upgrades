@@ -17,7 +17,7 @@
 
 - name: "REPORT | Version"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       VERSION:
         Before : {{ report_diff.version.pre }}
         After  : {{ report_diff.version.post }}
@@ -25,7 +25,7 @@
 
 - name: "REPORT | HA State"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       HA STATE:
         Failover Before : {{ report_diff.ha.pre_failover_state }}
         Failover After  : {{ report_diff.ha.post_failover_state }}
@@ -36,7 +36,7 @@
 
 - name: "REPORT | Virtual Servers - PASS (no regressions)"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       VIRTUAL SERVERS: PASS
         Total checked : {{ report_diff.virtual_servers | length }}
         Regressions   : 0
@@ -44,7 +44,7 @@
 
 - name: "REPORT | Virtual Servers - FAIL (regressions detected)"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       VIRTUAL SERVERS: FAIL
         Total checked : {{ report_diff.virtual_servers | length }}
         Regressions   : {{ report_diff.regression_summary.vs_regression_count }}
@@ -53,7 +53,7 @@
 
 - name: "REPORT | Routes"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       ROUTES:
         Before : {{ report_diff.routes.pre_line_count }} lines
         After  : {{ report_diff.routes.post_line_count }} lines
@@ -61,14 +61,14 @@
 
 - name: "REPORT | AS3 Declarations"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       AS3 DECLARATIONS:
         Changed : {{ report_diff.as3.changed | default('n/a') }}
         Result  : {{ 'WARNING - declarations changed during upgrade' if report_diff.as3.changed | default(false) | bool else 'OK - unchanged' }}
 
 - name: "REPORT | Changed Virtual Servers (state changed but not necessarily regressed)"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       VS CHANGES:
       {% for vs in report_diff.virtual_servers | selectattr('changed', 'equalto', true) | list %}
         - {{ vs.name }}: {{ vs.pre_availability }}/{{ vs.pre_enabled }} -> {{ vs.post_availability }}/{{ vs.post_enabled }}{{ ' [REGRESSION]' if vs.regressed else '' }}
@@ -82,7 +82,7 @@
 
 - name: "REPORT | Overall Result - PASS"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       ============================================================
       OVERALL RESULT : PASS
       Diff file      : {{ snapshot_output_dir }}/{{ report_diff.metadata.hostname }}_{{ snapshot_timestamp }}_diff.json
@@ -92,7 +92,7 @@
 
 - name: "REPORT | Overall Result - FAIL"
   ansible.builtin.debug:
-    msg: >-
+    msg: |
       ============================================================
       OVERALL RESULT : FAIL - REGRESSIONS DETECTED
       VS regressions : {{ report_diff.regression_summary.vs_regression_count }}

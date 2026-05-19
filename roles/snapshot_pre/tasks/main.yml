@@ -119,7 +119,7 @@
 - name: "SNAPSHOT_PRE | Get route table via tmsh"
   f5networks.f5_bigip.bigip_command:
     commands:
-      - "tmsh show /net route all-properties"
+      - "tmsh show /net route"
   register: snap_routes
 
 - name: "SNAPSHOT_PRE | Get ARP table via tmsh"
@@ -196,6 +196,9 @@
         phase: pre
         timestamp: "{{ snapshot_timestamp }}"
         version: "{{ snap_base_info.system_info.product_version | default('unknown') }}"
+        platform: "{{ snap_base_info.system_info.platform | default('unknown') }}"
+        marketing_name: "{{ snap_base_info.system_info.marketing_name | default('unknown') }}"
+        chassis_serial: "{{ snap_base_info.system_info.chassis_serial | default('unknown') }}"
         ha_failover_state: "{{ snap_failover_state }}"
         sync_state: "{{ snap_sync_state }}"
         partitions: "{{ snap_partition_names }}"
@@ -205,8 +208,8 @@
              if bigip_snapshot_save_ucs | bool else 'not_saved' }}
       virtual_servers: "{{ snap_all_virtual_servers | default([]) }}"
       ltm_pools: "{{ snap_all_ltm_pools | default([]) }}"
-      routes: "{{ snap_routes.stdout_lines | default([]) }}"
-      arp: "{{ snap_arp.stdout_lines | default([]) }}"
+      routes: "{{ snap_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
+      arp: "{{ snap_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
   delegate_to: localhost
 
 - name: "SNAPSHOT_PRE | Summary"

@@ -171,7 +171,7 @@
 - name: "SNAPSHOT_POST | Get route table via tmsh"
   f5networks.f5_bigip.bigip_command:
     commands:
-      - "tmsh show /net route all-properties"
+      - "tmsh show /net route"
   register: snap_post_routes
 
 - name: "SNAPSHOT_POST | Get ARP table via tmsh"
@@ -235,13 +235,16 @@
         phase: post
         timestamp: "{{ snapshot_timestamp }}"
         version: "{{ snap_post_base_info.system_info.product_version | default('unknown') }}"
+        platform: "{{ snap_post_base_info.system_info.platform | default('unknown') }}"
+        marketing_name: "{{ snap_post_base_info.system_info.marketing_name | default('unknown') }}"
+        chassis_serial: "{{ snap_post_base_info.system_info.chassis_serial | default('unknown') }}"
         ha_failover_state: "{{ snap_post_failover_state }}"
         sync_state: "{{ snap_post_sync_state }}"
         partitions: "{{ snap_post_partition_names }}"
       virtual_servers: "{{ snap_post_all_virtual_servers | default([]) }}"
       ltm_pools: "{{ snap_post_all_ltm_pools | default([]) }}"
-      routes: "{{ snap_post_routes.stdout_lines | default([]) }}"
-      arp: "{{ snap_post_arp.stdout_lines | default([]) }}"
+      routes: "{{ snap_post_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
+      arp: "{{ snap_post_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
   delegate_to: localhost
 
 # -----------------------------------------------------------------------------
@@ -280,8 +283,8 @@
   ansible.builtin.set_fact:
     diff_routes:
       pre_line_count: "{{ snapshot_pre_loaded.routes | default([]) | length }}"
-      post_line_count: "{{ snap_post_routes.stdout_lines | default([]) | length }}"
-      changed: "{{ snapshot_pre_loaded.routes | default([]) | length != snap_post_routes.stdout_lines | default([]) | length }}"
+      post_line_count: "{{ snap_post_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}"
+      changed: "{{ snapshot_pre_loaded.routes | default([]) | length != snap_post_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}"
 
 - name: "SNAPSHOT_POST | Compute version change"
   ansible.builtin.set_fact:
