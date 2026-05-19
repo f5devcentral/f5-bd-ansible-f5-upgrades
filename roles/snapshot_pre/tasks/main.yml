@@ -208,8 +208,10 @@
              if bigip_snapshot_save_ucs | bool else 'not_saved' }}
       virtual_servers: "{{ snap_all_virtual_servers | default([]) }}"
       ltm_pools: "{{ snap_all_ltm_pools | default([]) }}"
-      routes: "{{ snap_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
-      arp: "{{ snap_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}"
+      routes: >-
+          {{ test_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}
+      arp: >-
+          {{ test_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list }}
   delegate_to: localhost
 
 - name: "SNAPSHOT_PRE | Summary"
