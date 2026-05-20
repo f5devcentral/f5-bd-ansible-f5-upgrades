@@ -126,19 +126,35 @@
   delegate_to: localhost
   when: pre_as3_stat.stat.exists
 
+- name: "SNAPSHOT_POST | Normalise pre AS3 declaration for comparison"
+  ansible.builtin.set_fact:
+    snap_pre_as3_normalised: >-
+      {{ snap_pre_as3_loaded.declaration | default({}) | to_json | from_json
+         | dict2items
+         | rejectattr('key', 'in', ['controls', 'updateMode'])
+         | list | items2dict | to_json(sort_keys=True) }}
+  delegate_to: localhost
+  when: pre_as3_stat.stat.exists
+
+- name: "SNAPSHOT_POST | Normalise post AS3 declaration for comparison"
+  ansible.builtin.set_fact:
+    snap_post_as3_normalised: >-
+      {{ snap_post_as3_info.ansible_facts.ansible_net_as3_config.declaration | default({}) | to_json | from_json
+         | dict2items
+         | rejectattr('key', 'in', ['controls', 'updateMode'])
+         | list | items2dict | to_json(sort_keys=True) }}
+  when:
+    - snap_post_as3_info is not failed
+    - snap_post_as3_info.ansible_facts is defined
+    - snap_post_as3_info.ansible_facts.ansible_net_as3_config is defined
+
 - name: "SNAPSHOT_POST | Compute AS3 declaration diff"
   ansible.builtin.set_fact:
     diff_as3:
       pre_declaration: "{{ snap_pre_as3_loaded.declaration | default({}) }}"
       post_declaration: "{{ snap_post_as3_info.ansible_facts.ansible_net_as3_config.declaration | default({}) }}"
-      changed: >-
-        {{ (snap_pre_as3_loaded.declaration | default({}) | dict2items
-            | rejectattr('key', 'in', ['controls', 'updateMode'])
-            | list | items2dict | to_json(sort_keys=True)) !=
-           (snap_post_as3_info.ansible_facts.ansible_net_as3_config.declaration | default({}) | dict2items
-            | rejectattr('key', 'in', ['controls', 'updateMode'])
-            | list | items2dict | to_json(sort_keys=True)) }}
-      note: "Comparison excludes 'controls' and 'updateMode' keys (archiveTimestamp and updateMode change on every AS3 operation)"
+      changed: "{{ snap_pre_as3_normalised != snap_post_as3_normalised }}"
+      note: "Comparison excludes 'controls' and 'updateMode' keys. Both sides normalised via JSON roundtrip for consistent types."
   when:
     - pre_as3_stat.stat.exists
     - snap_post_as3_info is not failed
