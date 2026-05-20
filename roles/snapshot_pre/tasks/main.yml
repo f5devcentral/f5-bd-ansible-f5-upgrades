@@ -170,29 +170,61 @@
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
-# Save UCS backup - two-step async pattern
-# Step 1: Trigger UCS creation on BIG-IP - returns task_id
-# Step 2: Poll until complete and download to EE
+# Save UCS backup - two-step pattern
+# Step 1: Trigger UCS creation via httpapi (requires socket connection)
+# Step 2: Download completed UCS via URI from EE directly to BIG-IP
+#         (delegate_to: localhost - bypasses httpapi socket requirement)
 # -----------------------------------------------------------------------------
 
 - name: "SNAPSHOT_PRE | Step 1 - Trigger UCS creation on BIG-IP"
   f5networks.f5_bigip.bigip_ucs_fetch:
     dest: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
   register: snap_ucs_task
-  delegate_to: localhost
   when: bigip_snapshot_save_ucs | bool
 
-- name: "SNAPSHOT_PRE | Step 2 - Poll until UCS complete and download to EE"
-  f5networks.f5_bigip.bigip_ucs_fetch:
-    dest: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
-    src: "{{ snap_ucs_task.src }}"
-    task_id: "{{ snap_ucs_task.task_id }}"
+- name: "SNAPSHOT_PRE | Step 1 result - task_id"
+  ansible.builtin.debug:
+    msg: "UCS creation triggered - task_id={{ snap_ucs_task.task_id | default('n/a') }} src={{ snap_ucs_task.src | default('n/a') }}"
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Step 2 - Poll UCS task until complete"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/shared/file-transfer/ucs-downloads/{{ snap_ucs_task.src | default('') }}"
+    method: HEAD
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: [200, 404]
+    timeout: 30
+  register: snap_ucs_poll
+  delegate_to: localhost
+  retries: "{{ (bigip_ucs_timeout | default(1800) | int / 30) | int }}"
+  delay: 30
+  until: snap_ucs_poll.status == 200
+  when:
+    - bigip_snapshot_save_ucs | bool
+    - snap_ucs_task.task_id is defined
+  # TROUBLESHOOTING: no_log: true
+
+- name: "SNAPSHOT_PRE | Step 3 - Download UCS from BIG-IP to EE"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/shared/file-transfer/ucs-downloads/{{ snap_ucs_task.src | default('') }}"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
     timeout: "{{ bigip_ucs_timeout | default(1800) }}"
+    dest: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
   register: snap_ucs_save
   delegate_to: localhost
   when:
     - bigip_snapshot_save_ucs | bool
     - snap_ucs_task.task_id is defined
+    - snap_ucs_poll.status | default(0) == 200
+  # TROUBLESHOOTING: no_log: true
 
 - name: "SNAPSHOT_PRE | Confirm UCS downloaded to EE"
   ansible.builtin.stat:
