@@ -179,6 +179,7 @@
   f5networks.f5_bigip.bigip_ucs_fetch:
     dest: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
   register: snap_ucs_task
+  delegate_to: localhost
   when: bigip_snapshot_save_ucs | bool
 
 - name: "SNAPSHOT_PRE | Step 2 - Poll until UCS complete and download to EE"
@@ -188,6 +189,7 @@
     task_id: "{{ snap_ucs_task.task_id }}"
     timeout: "{{ bigip_ucs_timeout | default(1800) }}"
   register: snap_ucs_save
+  delegate_to: localhost
   when:
     - bigip_snapshot_save_ucs | bool
     - snap_ucs_task.task_id is defined
