@@ -151,6 +151,7 @@
           Pool count  : {{ snap1_all_pools | length }}
           Route count : {{ snap1_routes.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
           ARP count   : {{ snap1_arp.stdout_lines[0] | default([]) | reject('match', '^-+$') | reject('match', '^Net::') | reject('match', '^Name\s') | reject('match', '^\s*$') | list | length }}
+          File        : {{ test_output_dir }}/{{ inventory_hostname }}_{{ test_timestamp }}_snap1.json
 
     # -------------------------------------------------------------------------
     # Wait 30 seconds between snapshots
@@ -276,6 +277,17 @@
     # -------------------------------------------------------------------------
     # Compute diffs
     # -------------------------------------------------------------------------
+
+    - name: "TEST | Verify snapshot 1 file exists"
+      ansible.builtin.stat:
+        path: "{{ test_output_dir }}/{{ inventory_hostname }}_{{ test_timestamp }}_snap1.json"
+      register: snap1_file_stat
+      delegate_to: localhost
+
+    - name: "TEST | Fail if snapshot 1 file not found"
+      ansible.builtin.fail:
+        msg: "Snapshot 1 file not found at {{ test_output_dir }}/{{ inventory_hostname }}_{{ test_timestamp }}_snap1.json"
+      when: not snap1_file_stat.stat.exists
 
     - name: "TEST | Load snapshot 1 data"
       ansible.builtin.set_fact:
