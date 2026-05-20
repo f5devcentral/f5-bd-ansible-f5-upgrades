@@ -167,6 +167,77 @@
 
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
+# Increase REST framework timeouts before UCS backup
+# Required when AS3 or other iAppLX packages are installed
+# These packages slow down the REST framework and default timeouts are too low
+# -----------------------------------------------------------------------------
+
+- name: "SNAPSHOT_PRE | Increase iapplxrpm timeout for UCS backup"
+  f5networks.f5_bigip.bigip_command:
+    commands:
+      - "tmsh modify sys db iapplxrpm.timeout value 300"
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Increase restjavad timeout for UCS backup"
+  f5networks.f5_bigip.bigip_command:
+    commands:
+      - "tmsh modify sys db restjavad.timeout value 300"
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Increase restnoded timeout for UCS backup"
+  f5networks.f5_bigip.bigip_command:
+    commands:
+      - "tmsh modify sys db restnoded.timeout value 180"
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Increase icrd timeout for UCS backup"
+  f5networks.f5_bigip.bigip_command:
+    commands:
+      - "tmsh modify sys db icrd.timeout value 180"
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Save config after timeout changes"
+  f5networks.f5_bigip.bigip_command:
+    commands:
+      - "tmsh save sys config"
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Restart restjavad and restnoded services"
+  f5networks.f5_bigip.bigip_command:
+    commands:
+      - "run util bash -c 'bigstart restart restjavad restnoded'"
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Pause for services to restart"
+  ansible.builtin.pause:
+    seconds: 30
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Wait for REST API to be ready after restart"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/shared/echo"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    timeout: 30
+  register: bigip_rest_ready
+  until:
+    - bigip_rest_ready.status == 200
+    - bigip_rest_ready.json.stage is defined
+    - bigip_rest_ready.json.stage == 'STARTED'
+  retries: 20
+  delay: 15
+  delegate_to: localhost
+  when: bigip_snapshot_save_ucs | bool
+
+- name: "SNAPSHOT_PRE | Reset httpapi connection after service restart"
+  ansible.builtin.meta: reset_connection
+  when: bigip_snapshot_save_ucs | bool
+
+# -----------------------------------------------------------------------------
 # Save UCS backup - two-step pattern per f5networks.f5_bigip documentation
 # Step 1: Trigger UCS creation - dest only, returns task_id and src
 # Step 2: Poll until complete and download - uses task_id and src from Step 1
