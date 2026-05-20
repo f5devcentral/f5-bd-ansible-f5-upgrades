@@ -166,32 +166,27 @@
          | default({}) | json_query('status') | default('unknown') }}
 
 # -----------------------------------------------------------------------------
-# Save UCS backup
-# -----------------------------------------------------------------------------
-
 # -----------------------------------------------------------------------------
 # Save UCS backup - two-step pattern per f5networks.f5_bigip documentation
-# Both steps run via httpapi connection (no delegate_to - module requires socket)
-# Step 1: Trigger UCS creation - returns task_id and src filename
-# Step 2: Poll until complete and download to EE dest path
-# NOTE: bigip_ucs_fetch requires httpapi socket - cannot use delegate_to: localhost
+# Step 1: Trigger UCS creation - dest only, returns task_id and src
+# Step 2: Poll until complete and download - uses task_id and src from Step 1
 # NOTE: AS3 installed significantly increases UCS creation time - known F5 issue
 # -----------------------------------------------------------------------------
 
 - name: "SNAPSHOT_PRE | Step 1 - Trigger UCS creation on BIG-IP"
   f5networks.f5_bigip.bigip_ucs_fetch:
-    dest: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
+    dest: "/tmp/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
   register: snap_ucs_task
   when: bigip_snapshot_save_ucs | bool
 
-- name: "SNAPSHOT_PRE | Step 1 result - task_id"
+- name: "SNAPSHOT_PRE | Step 1 result"
   ansible.builtin.debug:
-    msg: "UCS creation triggered - task_id={{ snap_ucs_task.task_id | default('n/a') }} src={{ snap_ucs_task.src | default('n/a') }}"
+    msg: "UCS triggered - task_id={{ snap_ucs_task.task_id | default('n/a') }} src={{ snap_ucs_task.src | default('n/a') }}"
   when: bigip_snapshot_save_ucs | bool
 
 - name: "SNAPSHOT_PRE | Step 2 - Poll until UCS complete and download to EE"
   f5networks.f5_bigip.bigip_ucs_fetch:
-    dest: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
+    dest: "/tmp/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
     src: "{{ snap_ucs_task.src }}"
     task_id: "{{ snap_ucs_task.task_id }}"
     timeout: "{{ bigip_ucs_timeout | default(1800) }}"
@@ -199,6 +194,17 @@
   when:
     - bigip_snapshot_save_ucs | bool
     - snap_ucs_task.task_id is defined
+
+- name: "SNAPSHOT_PRE | Copy UCS from tmp to snapshot output dir"
+  ansible.builtin.copy:
+    src: "/tmp/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
+    dest: "{{ snapshot_output_dir }}/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
+    remote_src: false
+    mode: '0644'
+  delegate_to: localhost
+  when:
+    - bigip_snapshot_save_ucs | bool
+    - snap_ucs_save is not failed
 
 - name: "SNAPSHOT_PRE | Confirm UCS downloaded to EE"
   ansible.builtin.stat:
