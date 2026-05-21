@@ -38,10 +38,18 @@ ansible_command_timeout: 600
 
 
 # Target BIG-IP software version (used for post-upgrade version verification)
-bigip_target_version: "17.1.1"
+# bigip_target_version is auto-parsed from bigip_image_filename or bigip_ehf_filename
+# Format: BIGIP-17.5.1.5-0.0.6.iso -> 17.5.1.5
+# bigip_target_version: "17.5.1.5"  # override only if auto-parse does not work
 
 # ISO filename - must exist at {{ bastion_image_path }}/{{ bigip_image_filename }}
 bigip_image_filename: "BIGIP-17.1.1-0.0.4.iso"
+
+# Optional EHF (Engineering Hotfix) filename
+# If set, the EHF ISO will be staged to BIG-IP and used for installation
+# Both base image AND EHF must exist at {{ bastion_image_path }}
+# Leave empty to install standard image only
+# bigip_ehf_filename: "BIGIP-17.5.1.5-EHF-0.0.1.iso"
 
 # =============================================================================
 # BASTION - CIFS path vars

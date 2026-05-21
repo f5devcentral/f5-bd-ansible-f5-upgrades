@@ -48,12 +48,31 @@
         msg: "Missing required extra var: '{{ item }}' - set it in AAP Extra Variables."
       when: vars[item] is not defined or vars[item] | string | length == 0
       loop:
-        - bigip_target_version
         - bigip_image_filename
         - bastion_image_path
         - bastion_backup_root
       delegate_to: localhost
       run_once: false
+
+    - name: "PREFLIGHT | Set target version - explicit override or auto-parse from filename"
+      ansible.builtin.set_fact:
+        bigip_target_version: >-
+          {{ bigip_target_version
+             if bigip_target_version is defined and bigip_target_version != ''
+             else (bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != ''
+                   else bigip_image_filename)
+                  | regex_replace('^BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
+- name: "FAIL | Cannot determine target version from filename"
+  ansible.builtin.fail:
+    msg: |
+      Cannot determine target version from image filename.
+      Filename '{{ bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != '' else bigip_image_filename }}'
+      does not match expected format BIGIP-X.X.X.X-*.iso
+      Options:
+        - Rename the ISO to the original F5 filename format e.g. BIGIP-17.5.1.5-0.0.6.iso
+        - Set bigip_target_version: "17.5.1.5" explicitly in AAP Extra Variables
+  when: bigip_target_version | regex_search('^\d+\.\d+\.\d+\.\d+$') is none
+        cacheable: true
 
     - name: "PREFLIGHT | Query live failover state from device"
       ansible.builtin.uri:

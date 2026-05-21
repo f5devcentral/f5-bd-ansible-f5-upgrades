@@ -134,3 +134,99 @@
 - name: "BASTION_PUSH | Image verified and ready on BIG-IP"
   ansible.builtin.debug:
     msg: "{{ bigip_image_filename }} is verified and ready on {{ inventory_hostname }} ({{ ansible_host }})."
+
+# -----------------------------------------------------------------------------
+# Optional EHF staging
+# Only runs if bigip_ehf_filename is set
+# Both base image and EHF must be present on BIG-IP before install
+# -----------------------------------------------------------------------------
+
+- name: "BASTION_PUSH | EHF - Check if EHF already on BIG-IP"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/tm/sys/software/hotfix/{{ bigip_ehf_filename }}"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: [200, 404]
+    timeout: 30
+  register: bigip_ehf_check
+  delegate_to: localhost
+  when: bigip_ehf_filename is defined and bigip_ehf_filename != ''
+  # TROUBLESHOOTING: no_log: true
+
+- name: "BASTION_PUSH | EHF - Set already present fact"
+  ansible.builtin.set_fact:
+    bigip_ehf_already_present: "{{ bigip_ehf_check.status == 200 and bigip_ehf_check.json.verified | default('') == 'yes' }}"
+  when: bigip_ehf_filename is defined and bigip_ehf_filename != ''
+
+- name: "BASTION_PUSH | EHF - Already on BIG-IP, skipping transfer"
+  ansible.builtin.debug:
+    msg: "{{ bigip_ehf_filename }} already verified on {{ inventory_hostname }} - skipping EHF transfer."
+  when:
+    - bigip_ehf_filename is defined and bigip_ehf_filename != ''
+    - bigip_ehf_already_present | default(false) | bool
+
+- name: "BASTION_PUSH | EHF - Verify EHF exists on bastion"
+  ansible.builtin.stat:
+    path: "{{ bastion_image_path }}/{{ bigip_ehf_filename }}"
+  register: bastion_ehf_stat
+  delegate_to: bastion
+  vars:
+    ansible_connection: ssh
+  when:
+    - bigip_ehf_filename is defined and bigip_ehf_filename != ''
+    - not bigip_ehf_already_present | default(false) | bool
+
+- name: "BASTION_PUSH | EHF - Fail if EHF not found on bastion"
+  ansible.builtin.fail:
+    msg: "EHF file not found on bastion at {{ bastion_image_path }}/{{ bigip_ehf_filename }}"
+  when:
+    - bigip_ehf_filename is defined and bigip_ehf_filename != ''
+    - not bigip_ehf_already_present | default(false) | bool
+    - not bastion_ehf_stat.stat.exists | default(false)
+
+- name: "BASTION_PUSH | EHF - SCP EHF from bastion to BIG-IP /shared/images/"
+  ansible.builtin.shell: |
+    sshpass -f /tmp/.bigip_scp_pass_{{ ansible_host }} \
+    scp -P {{ bigip_ssh_port | default(22) }} \
+    -o StrictHostKeyChecking=no \
+    -o PubkeyAuthentication=no \
+    {{ bastion_image_path }}/{{ bigip_ehf_filename }} \
+    {{ ansible_user }}@{{ ansible_host }}:/shared/images/{{ bigip_ehf_filename }}
+  delegate_to: bastion
+  vars:
+    ansible_connection: ssh
+  when:
+    - bigip_ehf_filename is defined and bigip_ehf_filename != ''
+    - not bigip_ehf_already_present | default(false) | bool
+    - bastion_ehf_stat.stat.exists | default(false)
+  # TROUBLESHOOTING: no_log: true
+
+- name: "BASTION_PUSH | EHF - Poll BIG-IP until EHF is verified and ready"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/tm/sys/software/hotfix/{{ bigip_ehf_filename }}"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: bigip_ehf_verify
+  until:
+    - bigip_ehf_verify.status == 200
+    - bigip_ehf_verify.json.verified is defined
+    - bigip_ehf_verify.json.verified == 'yes'
+  retries: 30
+  delay: 15
+  delegate_to: localhost
+  when:
+    - bigip_ehf_filename is defined and bigip_ehf_filename != ''
+    - not bigip_ehf_already_present | default(false) | bool
+  # TROUBLESHOOTING: no_log: true
+
+- name: "BASTION_PUSH | EHF - Verified and ready on BIG-IP"
+  ansible.builtin.debug:
+    msg: "{{ bigip_ehf_filename }} is verified and ready on {{ inventory_hostname }} ({{ ansible_host }})."
+  when: bigip_ehf_filename is defined and bigip_ehf_filename != ''
