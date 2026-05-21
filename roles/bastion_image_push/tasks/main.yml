@@ -194,15 +194,15 @@
     -o StrictHostKeyChecking=no
     -o PubkeyAuthentication=no
     {{ bastion_image_path }}/{{ bigip_ehf_filename }}
-    {{ ansible_user }}@{{ ansible_host }}:/shared/images/{{ bigip_image_filename }}
+    {{ ansible_user }}@{{ ansible_host }}:/shared/images/{{ bigip_ehf_filename }}
   args:
     executable: /bin/bash
   delegate_to: bastion
   vars:
     ansible_connection: ssh
   when:
-    - bigip_ehf_filename is defined and bigip_ehf_filename != ''
-    - not bigip_ehf_already_present | default(false) | bool
+    - bigip_ehf_filename is defined
+    - not bigip_ehf_already_present | bool
     - bastion_ehf_stat.stat.exists | default(false)
   register: bastion_scp_result
   async: 3600
@@ -216,7 +216,7 @@
   delegate_to: bastion
   vars:
     ansible_connection: ssh
-  when: not bigip_image_already_present | bool
+  when: not bigip_ehf_already_present | bool
 
 - name: "BASTION_PUSH | Transfer complete"
   ansible.builtin.debug:
