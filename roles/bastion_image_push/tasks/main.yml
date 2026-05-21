@@ -188,13 +188,15 @@
     - not bastion_ehf_stat.stat.exists | default(false)
 
 - name: "BASTION_PUSH | EHF - SCP EHF from bastion to BIG-IP /shared/images/"
-  ansible.builtin.shell: |
-    sshpass -f /tmp/.bigip_scp_pass_{{ ansible_host }} \
-    scp -P {{ bigip_ssh_port | default(22) }} \
-    -o StrictHostKeyChecking=no \
-    -o PubkeyAuthentication=no \
-    {{ bastion_image_path }}/{{ bigip_ehf_filename }} \
-    {{ ansible_user }}@{{ ansible_host }}:/shared/images/{{ bigip_ehf_filename }}
+  ansible.builtin.shell: >
+    sshpass -f /tmp/.bigip_scp_pass_{{ ansible_host }}
+    scp -P {{ bigip_ssh_port | default(22) }}
+    -o StrictHostKeyChecking=no
+    -o PubkeyAuthentication=no
+    {{ bastion_image_path }}/{{ bigip_ehf_filename }}
+    {{ ansible_user }}@{{ ansible_host }}:/shared/images/{{ bigip_image_filename }}
+  args:
+    executable: /bin/bash
   delegate_to: bastion
   vars:
     ansible_connection: ssh
@@ -202,7 +204,26 @@
     - bigip_ehf_filename is defined and bigip_ehf_filename != ''
     - not bigip_ehf_already_present | default(false) | bool
     - bastion_ehf_stat.stat.exists | default(false)
+  register: bastion_scp_result
+  async: 3600
+  poll: 30
   # TROUBLESHOOTING: no_log: true
+
+- name: "BASTION_PUSH | Remove sshpass password file from bastion"
+  ansible.builtin.file:
+    path: "/tmp/.bigip_scp_pass_{{ ansible_host }}"
+    state: absent
+  delegate_to: bastion
+  vars:
+    ansible_connection: ssh
+  when: not bigip_image_already_present | bool
+
+- name: "BASTION_PUSH | Transfer complete"
+  ansible.builtin.debug:
+    msg: >-
+      Transfer complete: {{ bigip_ehf_filename }}
+      -> {{ inventory_hostname }} ({{ ansible_host }}):/shared/images/
+  when: not bigip_image_already_present | bool
 
 - name: "BASTION_PUSH | EHF - Poll BIG-IP until EHF is verified and ready"
   ansible.builtin.uri:
