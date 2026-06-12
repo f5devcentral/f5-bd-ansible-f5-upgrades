@@ -268,7 +268,7 @@
     dest: "/tmp/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
     src: "{{ snap_ucs_task.src }}"
     task_id: "{{ snap_ucs_task.task_id }}"
-    timeout: "{{ bigip_ucs_timeout | default(1800) }}"
+    timeout: "{{ bigip_ucs_timeout | default(1800) | int }}"
   register: snap_ucs_save
   when:
     - bigip_snapshot_save_ucs | bool
