@@ -256,6 +256,13 @@
     msg: "UCS triggered - task_id={{ snap_ucs_task.task_id | default('n/a') }} src={{ snap_ucs_task.src | default('n/a') }}"
   when: bigip_snapshot_save_ucs | bool
 
+- name: "SNAPSHOT_PRE | Pause before polling UCS task"
+  ansible.builtin.pause:
+    seconds: 15
+  when:
+    - bigip_snapshot_save_ucs | bool
+    - snap_ucs_task.task_id is defined
+
 - name: "SNAPSHOT_PRE | Step 2 - Poll until UCS complete and download to EE"
   f5networks.f5_bigip.bigip_ucs_fetch:
     dest: "/tmp/pre_upgrade_{{ inventory_hostname }}_{{ snapshot_timestamp }}.ucs"
