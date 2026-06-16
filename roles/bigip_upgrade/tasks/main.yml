@@ -54,6 +54,26 @@
          .get('Version', {})
          .get('description', 'unknown') }}
 
+- name: "UPGRADE | Set target version - explicit override or auto-parse from filename"
+  ansible.builtin.set_fact:
+    bigip_target_version: >-
+      {{ bigip_target_version
+         if bigip_target_version is defined and bigip_target_version != ''
+         else (bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != ''
+               else bigip_image_filename)
+              | regex_replace('^BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
+
+- name: "UPGRADE | Fail if target version cannot be determined from filename"
+  ansible.builtin.fail:
+    msg: |
+      Cannot determine target version from image filename.
+      Filename '{{ bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != '' else bigip_image_filename }}'
+      does not match expected format BIGIP-X.X.X.X-*.iso
+      Options:
+        - Rename the ISO to the original F5 filename format e.g. BIGIP-17.5.1.5-0.0.6.iso
+        - Set bigip_target_version: "17.5.1.5" explicitly in AAP Extra Variables
+  when: bigip_target_version | regex_search('^\d+\.\d+\.\d+\.\d+$') is none
+
 - name: "UPGRADE | Display current version"
   ansible.builtin.debug:
     msg: "{{ ansible_host }} current version: {{ bigip_current_version }} | target: {{ bigip_target_version }}"
@@ -64,15 +84,32 @@
 
 - name: "UPGRADE | Dry-run mode - skipping install and reboot"
   ansible.builtin.debug:
-    msg: "DRY RUN: Would install {{ bigip_image_filename }} to {{ bigip_install_volume }} on {{ ansible_host }}"
+    msg: |
+      DRY RUN: Would install
+      {{ 'EHF: ' + bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != '' else 'Image: ' + bigip_image_filename }}
+      to {{ bigip_install_volume }} on {{ ansible_host }}
   when: bigip_upgrade_dry_run | bool
 
 # -----------------------------------------------------------------------------
 # Step 1 - Trigger install+activation
+# If EHF is provided use EHF filename - module auto-detects hotfix type
+# Both base image AND EHF must already be on BIG-IP /shared/images/
 # Socket dies after this call - expected behaviour with httpapi connection
 # -----------------------------------------------------------------------------
 
-- name: "UPGRADE | Trigger install and activate (state=activated)"
+- name: "UPGRADE | Trigger install and activate - EHF"
+  f5networks.f5_bigip.bigip_software_install:
+    image: "{{ bigip_ehf_filename }}"
+    state: activated
+    volume: "{{ bigip_install_volume }}"
+  register: bigip_activate_result
+  ignore_errors: true
+  when:
+    - not bigip_upgrade_dry_run | bool
+    - bigip_reboot_after_install | bool
+    - bigip_ehf_filename is defined and bigip_ehf_filename != ''
+
+- name: "UPGRADE | Trigger install and activate - standard image"
   f5networks.f5_bigip.bigip_software_install:
     image: "{{ bigip_image_filename }}"
     state: activated
@@ -82,6 +119,7 @@
   when:
     - not bigip_upgrade_dry_run | bool
     - bigip_reboot_after_install | bool
+    - bigip_ehf_filename is not defined or bigip_ehf_filename == ''
 
 - name: "UPGRADE | Activation triggered - install starting"
   ansible.builtin.debug:
