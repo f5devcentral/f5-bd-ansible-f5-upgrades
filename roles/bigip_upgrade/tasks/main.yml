@@ -193,7 +193,7 @@
 
 # -----------------------------------------------------------------------------
 # Step 3 - URI poll until complete, rebooting, or unreachable
-# Polls every 30s for up to 30 min (60 retries)
+# Polls every 30s for up to 45 min (90 retries)
 # Exit conditions:
 #   a. status == 'complete'        - install done, device will reboot soon
 #   b. 'restarting' in status      - device already rebooting
@@ -217,7 +217,7 @@
     bigip_volume_poll.status | default(0) != 200 or
     bigip_volume_poll.json.status | default('') == 'complete' or
     'restarting' in (bigip_volume_poll.json.status | default('') | lower)
-  retries: 60
+  retries: 90
   delay: 30
   failed_when: false
   when:
