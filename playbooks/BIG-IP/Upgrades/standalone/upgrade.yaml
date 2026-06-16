@@ -53,7 +53,7 @@
              if bigip_target_version is defined and bigip_target_version != ''
              else (bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != ''
                    else bigip_image_filename)
-                  | regex_replace('^Hotfix-BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
+                  | regex_replace('^(?:Hotfix-)?BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
         cacheable: true
 
     - name: "PREFLIGHT | Fail if target version cannot be determined from filename"
@@ -137,9 +137,9 @@
 
 
 # =============================================================================
-# PLAY 2 - Pre-snapshot
+# PLAY 3 - Pre-snapshot
 # =============================================================================
-- name: "BIG-IP Standalone Upgrade - Play 2: Pre-Snapshot"
+- name: "BIG-IP Standalone Upgrade - Play 3: Pre-Snapshot"
   hosts: "{{ target_hosts | default('bigip_standalone') }}"
   gather_facts: false
   roles:
@@ -148,9 +148,9 @@
 
 
 # =============================================================================
-# PLAY 3 - Upgrade: install, activate, wait for device to return
+# PLAY 4 - Upgrade: install, activate, wait for device to return
 # =============================================================================
-- name: "BIG-IP Standalone Upgrade - Play 3: Upgrade Device"
+- name: "BIG-IP Standalone Upgrade - Play 4: Upgrade Device"
   hosts: "{{ target_hosts | default('bigip_standalone') }}"
   gather_facts: false
   pre_tasks:
@@ -166,9 +166,9 @@
 
 
 # =============================================================================
-# PLAY 4 - Post-snapshot + diff report
+# PLAY 5 - Post-snapshot + diff report
 # =============================================================================
-- name: "BIG-IP Standalone Upgrade - Play 4: Post-Snapshot & Diff Report"
+- name: "BIG-IP Standalone Upgrade - Play 5: Post-Snapshot & Diff Report"
   hosts: "{{ target_hosts | default('bigip_standalone') }}"
   gather_facts: false
   roles:
@@ -178,9 +178,9 @@
 
 
 # =============================================================================
-# PLAY 5 - Store artifacts on bastion
+# PLAY 6 - Store artifacts on bastion
 # =============================================================================
-- name: "BIG-IP Standalone Upgrade - Play 5: Store Artifacts on Bastion"
+- name: "BIG-IP Standalone Upgrade - Play 6: Store Artifacts on Bastion"
   hosts: "{{ target_hosts | default('bigip_standalone') }}"
   gather_facts: false
   roles:

@@ -61,7 +61,7 @@
              if bigip_target_version is defined and bigip_target_version != ''
              else (bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != ''
                    else bigip_image_filename)
-                  | regex_replace('^Hotfix-BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
+                  | regex_replace('^(?:Hotfix-)?BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
         cacheable: true
 
     - name: "PREFLIGHT | Fail if target version cannot be determined from filename"
@@ -245,7 +245,7 @@
   pre_tasks:
     - name: "LICENSE | Skip - only run on standby unit"
       ansible.builtin.meta: end_host
-      when: bigip_ha_role | default('unknown') != 'standby'
+      when: ha_role | default('unknown') != 'standby'
   roles:
     - role: bigip_license
   tags: [license]
@@ -256,7 +256,7 @@
   pre_tasks:
     - name: "LICENSE | Skip - only run on active unit"
       ansible.builtin.meta: end_host
-      when: bigip_ha_role | default('unknown') != 'active'
+      when: ha_role | default('unknown') != 'active'
   vars:
     # Active node reactivation causes a failover - only check, do not reactivate
     # If active needs reactivation it will be handled after failover in Play 7
@@ -278,9 +278,9 @@
 
 
 # =============================================================================
-# PLAY 2 - Pre-snapshot: both units
+# PLAY 3 - Pre-snapshot: both units
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 2: Pre-Snapshot (Both Units)"
+- name: "BIG-IP HA Upgrade - Play 3: Pre-Snapshot (Both Units)"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   serial: 1
@@ -290,9 +290,9 @@
 
 
 # =============================================================================
-# PLAY 3 - Upgrade standby unit
+# PLAY 4 - Upgrade standby unit
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 3: Upgrade Standby Unit"
+- name: "BIG-IP HA Upgrade - Play 4: Upgrade Standby Unit"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   pre_tasks:
@@ -314,9 +314,9 @@
 
 
 # =============================================================================
-# PLAY 4 - Verify standby came back clean before proceeding to failover
+# PLAY 5 - Verify standby came back clean before proceeding to failover
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 4: Verify Standby Came Back Clean"
+- name: "BIG-IP HA Upgrade - Play 5: Verify Standby Came Back Clean"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   pre_tasks:
@@ -334,9 +334,9 @@
 
 
 # =============================================================================
-# PLAY 5 - Force failover: active yields to upgraded standby
+# PLAY 6 - Force failover: active yields to upgraded standby
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 5: Force Failover to Upgraded Standby"
+- name: "BIG-IP HA Upgrade - Play 6: Force Failover to Upgraded Standby"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   pre_tasks:
@@ -397,18 +397,18 @@
 
 
 # =============================================================================
-# PLAY 6 - License reactivation on old-active (now standby after failover)
+# PLAY 7 - License reactivation on old-active (now standby after failover)
 # Runs after failover so old-active is now standby - safe to reactivate.
 # bigip_license_skip_sync=true because nodes are on different versions -
 # sync will fail. Changes Pending clears after both nodes on same version.
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 6: License Reactivation on Old-Active (Now Standby)"
+- name: "BIG-IP HA Upgrade - Play 7: License Reactivation on Old-Active (Now Standby)"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   pre_tasks:
     - name: "LICENSE | Skip - only run on original active (now standby)"
       ansible.builtin.meta: end_host
-      when: bigip_ha_role | default('unknown') != 'active'
+      when: ha_role | default('unknown') != 'active'
   vars:
     bigip_license_skip_sync: true
   roles:
@@ -417,9 +417,9 @@
 
 
 # =============================================================================
-# PLAY 7 - Upgrade old-active (now standby after failover)
+# PLAY 8 - Upgrade old-active (now standby after failover)
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 7: Upgrade Old-Active (Now Standby)"
+- name: "BIG-IP HA Upgrade - Play 8: Upgrade Old-Active (Now Standby)"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   pre_tasks:
@@ -443,9 +443,9 @@
 
 
 # =============================================================================
-# PLAY 7 - Optional failback to original active
+# PLAY 9 - Optional failback to original active
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 7: Optional Failback to Original Active"
+- name: "BIG-IP HA Upgrade - Play 9: Optional Failback to Original Active"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   pre_tasks:
@@ -481,9 +481,9 @@
 
 
 # =============================================================================
-# PLAY 8 - Final post-snapshot + diff report (both units)
+# PLAY 10 - Final post-snapshot + diff report (both units)
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 8: Final Post-Snapshot & Diff Report (Both Units)"
+- name: "BIG-IP HA Upgrade - Play 10: Final Post-Snapshot & Diff Report (Both Units)"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   roles:
@@ -493,10 +493,10 @@
 
 
 # =============================================================================
-# PLAY 9 - Store all artifacts on bastion (JSON diffs + UCS backups)
+# PLAY 11 - Store all artifacts on bastion (JSON diffs + UCS backups)
 # Structure: {{ bastion_backup_root }}/<hostname>/<date>/
 # =============================================================================
-- name: "BIG-IP HA Upgrade - Play 9: Store Artifacts on Bastion"
+- name: "BIG-IP HA Upgrade - Play 11: Store Artifacts on Bastion"
   hosts: "{{ target_hosts | default('bigip_ha') }}"
   gather_facts: false
   roles:

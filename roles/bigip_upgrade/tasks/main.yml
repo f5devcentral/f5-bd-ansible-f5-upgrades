@@ -39,11 +39,6 @@
   until: bigip_current_version_check.status == 200
   # TROUBLESHOOTING: no_log: true
 
-- name: "UPGRADE | Fail if version check did not succeed"
-  ansible.builtin.fail:
-    msg: "Could not reach {{ ansible_host }} after 10 retries. Halting upgrade."
-  when: bigip_current_version_check.status != 200
-
 - name: "UPGRADE | Set current version fact"
   ansible.builtin.set_fact:
     bigip_current_version: >-
@@ -61,7 +56,7 @@
          if bigip_target_version is defined and bigip_target_version != ''
          else (bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != ''
                else bigip_image_filename)
-              | regex_replace('^BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
+              | regex_replace('^(?:Hotfix-)?BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
 
 - name: "UPGRADE | Fail if target version cannot be determined from filename"
   ansible.builtin.fail:
@@ -89,6 +84,58 @@
       {{ 'EHF: ' + bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != '' else 'Image: ' + bigip_image_filename }}
       to {{ bigip_install_volume }} on {{ ansible_host }}
   when: bigip_upgrade_dry_run | bool
+
+- name: "UPGRADE | End host - dry run mode"
+  ansible.builtin.meta: end_host
+  when: bigip_upgrade_dry_run | bool
+
+# -----------------------------------------------------------------------------
+# Pre-check - ensure target volume is not the currently active volume
+# Installing to the active volume would overwrite the running system
+# -----------------------------------------------------------------------------
+
+- name: "UPGRADE | Get all software volumes"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ bigip_https_port | default(443) }}/mgmt/tm/sys/software/volume"
+    method: GET
+    user: "{{ ansible_user }}"
+    password: "{{ ansible_password | default(ansible_httpapi_password) | default(omit) }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    timeout: 60
+  register: bigip_volumes
+  delegate_to: localhost
+  # TROUBLESHOOTING: no_log: true
+
+- name: "UPGRADE | Set active volume fact"
+  ansible.builtin.set_fact:
+    bigip_active_volume: >-
+      {{ bigip_volumes.json.get('items', [])
+         | selectattr('active', 'defined')
+         | selectattr('active', 'equalto', true)
+         | map(attribute='name')
+         | list
+         | first
+         | default('unknown') }}
+
+- name: "UPGRADE | Display volume info"
+  ansible.builtin.debug:
+    msg: |
+      {{ ansible_host }} volume info:
+      Active volume  : {{ bigip_active_volume }}
+      Install volume : {{ bigip_install_volume }}
+
+- name: "UPGRADE | FAIL - target volume is the active boot volume"
+  ansible.builtin.fail:
+    msg: |
+      PREFLIGHT FAILED: {{ inventory_hostname }}
+      Install volume '{{ bigip_install_volume }}' is the currently active boot volume.
+      Installing to the active volume would overwrite the running system.
+      Options:
+        - Change bigip_install_volume to a different volume (e.g. HD1.2 or HD1.3)
+        - Check which volume is available for installation
+  when: bigip_active_volume == bigip_install_volume
 
 # -----------------------------------------------------------------------------
 # Step 1 - Trigger install+activation
