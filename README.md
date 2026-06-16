@@ -10,7 +10,7 @@ Automated upgrade orchestration for F5 BIG-IP devices (standalone and HA pairs) 
 |---|---|
 | BIG-IP HA Pair | ✅ Testing ready |
 | BIG-IP Standalone | 🚧 Testing In Progress |
-| F5OS rSeries | 🚧 Testing In Progress |
+| F5OS rSeries | 🚧 Work in progress |
 | F5OS Velos | 🚧 Work in progress |
 
 ---
