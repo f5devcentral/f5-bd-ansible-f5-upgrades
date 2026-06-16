@@ -53,7 +53,7 @@
              if bigip_target_version is defined and bigip_target_version != ''
              else (bigip_ehf_filename if bigip_ehf_filename is defined and bigip_ehf_filename != ''
                    else bigip_image_filename)
-                  | regex_replace('^Hotfix-BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
+                  | regex_replace('^(?:Hotfix-)?BIGIP-(\d+\.\d+\.\d+\.\d+).*\.iso$', '\1') }}
         cacheable: true
 
     - name: "PREFLIGHT | Fail if target version cannot be determined from filename"
