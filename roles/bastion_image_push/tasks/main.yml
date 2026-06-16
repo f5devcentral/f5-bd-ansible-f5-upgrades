@@ -161,6 +161,11 @@
     bigip_ehf_already_present: "{{ bigip_ehf_check.status == 200 and bigip_ehf_check.json.verified | default('') == 'yes' }}"
   when: bigip_ehf_filename is defined and bigip_ehf_filename != ''
 
+- name: "BASTION_PUSH | EHF - Default already present to false when EHF not defined"
+  ansible.builtin.set_fact:
+    bigip_ehf_already_present: false
+  when: bigip_ehf_filename is not defined or bigip_ehf_filename == ''
+
 - name: "BASTION_PUSH | EHF - Already on BIG-IP, skipping transfer"
   ansible.builtin.debug:
     msg: "{{ bigip_ehf_filename }} already verified on {{ inventory_hostname }} - skipping EHF transfer."
